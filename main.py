@@ -45,9 +45,9 @@ ODDS_FORMAT = 'decimal'
 MIN_EDGE = -0.05 
 
 SPORT_MARKETS = {
-    'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
-    'aussierules_afl': 'h2h,player_disposals',
-    'soccer_epl': 'h2h'
+    'basketball_nba': 'h2h,spreads,totals',
+    'aussierules_afl': 'h2h,spreads,totals',
+    'soccer_epl': 'h2h,spreads,totals'
 }
 
 profitable_bets_found = 0
