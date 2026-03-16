@@ -6,17 +6,14 @@ import time
 
 print("Authenticating with GitHub Secrets...")
 
-# 1. Load the Bot Password from the Secret Vault
 gcp_credentials_json = os.environ.get('GCP_CREDENTIALS')
 if not gcp_credentials_json:
     print("Error: GCP_CREDENTIALS secret is missing!")
     exit()
 
-# Parse the JSON string back into a dictionary to log into Google
 credentials_dict = json.loads(gcp_credentials_json)
 gc = gspread.service_account_from_dict(credentials_dict)
 
-# 2. Sheet Connection
 SHEET_NAME = "BETTING"
 try:
     worksheet = gc.open(SHEET_NAME).sheet1
@@ -25,7 +22,6 @@ except gspread.SpreadsheetNotFound:
     print(f"Error: Could not find a Google Sheet named '{SHEET_NAME}'.")
     exit()
 
-# 3. API Setup
 API_KEY = os.environ.get('ODDS_API_KEY')
 if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
@@ -33,18 +29,20 @@ if not API_KEY:
 
 REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = 0.02
+MIN_EDGE = 0.02 
 
-# Targeting H2H for this first cloud test. We will upgrade to Player Props next.
-TARGET_SPORTS = ['basketball_nba', 'aussierules_afl']
-TARGET_MARKET = 'h2h'
+# 1. The Market Dictionary: Targets specific props for specific sports
+SPORT_MARKETS = {
+    'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
+    'aussierules_afl': 'h2h,player_disposals',
+    'soccer_epl': 'h2h'
+}
 
 profitable_bets_found = 0
 
-# 4. The Master Loop
-for sport in TARGET_SPORTS:
-    print(f"Scanning {sport}...")
-    url = f'https://api.the-odds-api.com/v4/sports/{sport}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={TARGET_MARKET}&oddsFormat={ODDS_FORMAT}'
+for sport, markets in SPORT_MARKETS.items():
+    print(f"Scanning {sport} for markets: {markets}...")
+    url = f'https://api.the-odds-api.com/v4/sports/{sport}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={markets}&oddsFormat={ODDS_FORMAT}'
     
     response = requests.get(url)
     
@@ -54,44 +52,63 @@ for sport in TARGET_SPORTS:
         for game in odds_json:
             matchup = f"{game.get('home_team', 'Unknown')} vs {game.get('away_team', 'Unknown')}"
             
-            pinnacle_odds = {}
-            for bookie in game['bookmakers']:
-                if bookie['title'] == 'Pinnacle':
-                    for outcome in bookie['markets'][0]['outcomes']:
-                        pinnacle_odds[outcome['name']] = outcome['price']
-            
-            if pinnacle_odds and len(pinnacle_odds) == 2:
-                teams = list(pinnacle_odds.keys())
-                team_1, team_2 = teams[0], teams[1]
-                
-                ip_1 = 1 / pinnacle_odds[team_1]
-                ip_2 = 1 / pinnacle_odds[team_2]
-                total_market = ip_1 + ip_2
-                
-                tp_1 = ip_1 / total_market
-                tp_2 = ip_2 / total_market
-                
-                for bookie in game['bookmakers']:
-                    if bookie['title'] in ['Sportsbet', 'TAB', 'Neds', 'Ladbrokes', 'Betr']:
-                        for outcome in bookie['markets'][0]['outcomes']:
-                            team = outcome['name']
-                            local_odds = outcome['price']
-                            tp = tp_1 if team == team_1 else tp_2
-                            
-                            edge = (tp * local_odds) - 1
-                            
-                            if edge >= MIN_EDGE:
-                                profitable_bets_found += 1
-                                edge_formatted = f"+{round(edge*100, 2)}%"
-                                print(f"  🚨 {sport} EDGE: {team} at {bookie['title']} ({edge_formatted})")
-                                
-                                row_data = [
-                                    matchup, bookie['title'], team, local_odds, 
-                                    "", "", "", "", "", "", "", edge_formatted
-                                ]
-                                worksheet.append_row(row_data)
-                                time.sleep(1)
+            # Group all bookies by market first
+            for market_data in game.get('bookmakers', []):
+                for market in market_data.get('markets', []):
+                    market_key = market['key']
+                    
+                    # We need to find Pinnacle's odds for this specific market to calculate the true probability
+                    pinnacle_outcomes = []
+                    for b in game['bookmakers']:
+                        if b['title'] == 'Pinnacle':
+                            for m in b['markets']:
+                                if m['key'] == market_key:
+                                    pinnacle_outcomes = m['outcomes']
+                                    break
+                    
+                    # Only proceed if Pinnacle has priced this exact market and it's a 2-way market (like Over/Under)
+                    if len(pinnacle_outcomes) == 2:
+                        ip_1 = 1 / pinnacle_outcomes[0]['price']
+                        ip_2 = 1 / pinnacle_outcomes[1]['price']
+                        total_market = ip_1 + ip_2
+                        
+                        tp_1 = ip_1 / total_market
+                        tp_2 = ip_2 / total_market
+                        
+                        for bookie in game['bookmakers']:
+                            if bookie['title'] in ['Sportsbet', 'TAB', 'Neds', 'Ladbrokes', 'Betr']:
+                                for b_market in bookie['markets']:
+                                    if b_market['key'] == market_key:
+                                        # Match the outcomes
+                                        for idx, outcome in enumerate(b_market['outcomes']):
+                                            # Try to match the exact outcome to Pinnacle's TP
+                                            # (Assuming order matches for simplicity in this script)
+                                            tp = tp_1 if idx == 0 else tp_2
+                                            local_odds = outcome['price']
+                                            
+                                            edge = (tp * local_odds) - 1
+                                            
+                                            if edge >= MIN_EDGE:
+                                                profitable_bets_found += 1
+                                                edge_formatted = f"+{round(edge*100, 2)}%"
+                                                
+                                                # 2. The Selection Formatter
+                                                # If it's a prop, it has a 'description' (Player Name) and 'point' (The Line)
+                                                if 'description' in outcome:
+                                                    selection = f"{outcome['description']} - {outcome['name']} {outcome.get('point', '')} ({market_key})"
+                                                else:
+                                                    selection = f"{outcome['name']} ({market_key})"
+                                                
+                                                print(f"  🚨 EDGE: {selection} at {bookie['title']} ({edge_formatted})")
+                                                
+                                                # Pushes to Sheets: Matchup (A), Bookie (B), Selection (C), Odds (D), Edge (L)
+                                                row_data = [
+                                                    matchup, bookie['title'], selection, local_odds, 
+                                                    "", "", "", "", "", "", "", edge_formatted
+                                                ]
+                                                worksheet.append_row(row_data)
+                                                time.sleep(1)
     else:
         print(f"  Failed to fetch data for {sport}.")
-        
+
 print(f"\nMaster Scan Complete! Logged {profitable_bets_found} high-value bets.")
