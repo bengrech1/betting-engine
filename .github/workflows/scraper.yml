@@ -2,8 +2,9 @@ name: Betting Engine Auto-Scanner
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # This means: Run every 30 minutes
-  workflow_dispatch: # This allows you to click a button to run it manually
+    # Runs every 30 mins between 7am and 11pm AEDT (20:00 to 11:00 UTC)
+    - cron: '*/30 0-11,20-23 * * *'
+  workflow_dispatch: 
 
 jobs:
   scan-odds:
