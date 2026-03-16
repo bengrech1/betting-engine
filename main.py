@@ -17,10 +17,23 @@ gc = gspread.service_account_from_dict(credentials_dict)
 SHEET_NAME = "BETTING"
 try:
     worksheet = gc.open(SHEET_NAME).sheet1
-    print(f"Successfully connected to sheet: {SHEET_NAME}\n")
+    print(f"Successfully connected to sheet: {SHEET_NAME}")
 except gspread.SpreadsheetNotFound:
     print(f"Error: Could not find a Google Sheet named '{SHEET_NAME}'.")
     exit()
+
+# --- DUPLICATE PREVENTION SETUP ---
+print("Fetching existing bets from the sheet to prevent duplicates...")
+existing_rows = worksheet.get_all_values()
+
+# Create a 'memory' of unique bets already in the sheet: Matchup + Bookie + Selection
+existing_bets = set()
+for row in existing_rows:
+    if len(row) >= 3:
+        unique_id = f"{row[0]}_{row[1]}_{row[2]}"
+        existing_bets.add(unique_id)
+print(f"Found {len(existing_bets)} existing bets in the sheet.\n")
+# ----------------------------------
 
 API_KEY = os.environ.get('ODDS_API_KEY')
 if not API_KEY:
@@ -31,7 +44,6 @@ REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
 MIN_EDGE = 0.02 
 
-# 1. The Market Dictionary: Targets specific props for specific sports
 SPORT_MARKETS = {
     'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
     'aussierules_afl': 'h2h,player_disposals',
@@ -39,6 +51,7 @@ SPORT_MARKETS = {
 }
 
 profitable_bets_found = 0
+new_bets_logged = 0
 
 for sport, markets in SPORT_MARKETS.items():
     print(f"Scanning {sport} for markets: {markets}...")
@@ -52,12 +65,10 @@ for sport, markets in SPORT_MARKETS.items():
         for game in odds_json:
             matchup = f"{game.get('home_team', 'Unknown')} vs {game.get('away_team', 'Unknown')}"
             
-            # Group all bookies by market first
             for market_data in game.get('bookmakers', []):
                 for market in market_data.get('markets', []):
                     market_key = market['key']
                     
-                    # We need to find Pinnacle's odds for this specific market to calculate the true probability
                     pinnacle_outcomes = []
                     for b in game['bookmakers']:
                         if b['title'] == 'Pinnacle':
@@ -66,7 +77,6 @@ for sport, markets in SPORT_MARKETS.items():
                                     pinnacle_outcomes = m['outcomes']
                                     break
                     
-                    # Only proceed if Pinnacle has priced this exact market and it's a 2-way market (like Over/Under)
                     if len(pinnacle_outcomes) == 2:
                         ip_1 = 1 / pinnacle_outcomes[0]['price']
                         ip_2 = 1 / pinnacle_outcomes[1]['price']
@@ -79,10 +89,7 @@ for sport, markets in SPORT_MARKETS.items():
                             if bookie['title'] in ['Sportsbet', 'TAB', 'Neds', 'Ladbrokes', 'Betr']:
                                 for b_market in bookie['markets']:
                                     if b_market['key'] == market_key:
-                                        # Match the outcomes
                                         for idx, outcome in enumerate(b_market['outcomes']):
-                                            # Try to match the exact outcome to Pinnacle's TP
-                                            # (Assuming order matches for simplicity in this script)
                                             tp = tp_1 if idx == 0 else tp_2
                                             local_odds = outcome['price']
                                             
@@ -92,23 +99,26 @@ for sport, markets in SPORT_MARKETS.items():
                                                 profitable_bets_found += 1
                                                 edge_formatted = f"+{round(edge*100, 2)}%"
                                                 
-                                                # 2. The Selection Formatter
-                                                # If it's a prop, it has a 'description' (Player Name) and 'point' (The Line)
                                                 if 'description' in outcome:
                                                     selection = f"{outcome['description']} - {outcome['name']} {outcome.get('point', '')} ({market_key})"
                                                 else:
                                                     selection = f"{outcome['name']} ({market_key})"
                                                 
-                                                print(f"  🚨 EDGE: {selection} at {bookie['title']} ({edge_formatted})")
+                                                # --- DUPLICATE CHECK LOGIC ---
+                                                bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                                 
-                                                # Pushes to Sheets: Matchup (A), Bookie (B), Selection (C), Odds (D), Edge (L)
-                                                row_data = [
-                                                    matchup, bookie['title'], selection, local_odds, 
-                                                    "", "", "", "", "", "", "", edge_formatted
-                                                ]
-                                                worksheet.append_row(row_data)
-                                                time.sleep(1)
+                                                if bet_id not in existing_bets:
+                                                    print(f"  🚨 NEW EDGE: {selection} at {bookie['title']} ({edge_formatted})")
+                                                    row_data = [
+                                                        matchup, bookie['title'], selection, local_odds, 
+                                                        "", "", "", "", "", "", "", edge_formatted
+                                                    ]
+                                                    worksheet.append_row(row_data)
+                                                    existing_bets.add(bet_id) # Memorize it immediately
+                                                    new_bets_logged += 1
+                                                    time.sleep(1) # Keeps Google Sheets from blocking us
+                                                # -----------------------------
     else:
         print(f"  Failed to fetch data for {sport}.")
 
-print(f"\nMaster Scan Complete! Logged {profitable_bets_found} high-value bets.")
+print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
