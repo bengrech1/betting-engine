@@ -118,7 +118,8 @@ for sport, markets in SPORT_MARKETS.items():
                                                     new_bets_logged += 1
                                                     time.sleep(1) # Keeps Google Sheets from blocking us
                                                 # -----------------------------
-    else:
-        print(f"  Failed to fetch data for {sport}.")
+   else:
+        print(f"  Failed to fetch data for {sport}. Status Code: {response.status_code}")
+        print(f"  Error Message: {response.text}")
 
 print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
