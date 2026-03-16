@@ -40,9 +40,9 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     exit()
 
-REGIONS = 'au,eu'
+REGIONS = 'au,eu,us'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = 0.02 
+MIN_EDGE = -0.05 
 
 SPORT_MARKETS = {
     'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
