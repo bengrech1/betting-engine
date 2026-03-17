@@ -27,4 +27,5 @@ jobs:
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: python main.py
