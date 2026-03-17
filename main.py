@@ -117,10 +117,10 @@ for sport, markets in SPORT_MARKETS.items():
                                                 profitable_bets_found += 1
                                                 edge_formatted = f"+{round(edge*100, 2)}%"
                                                 
-                                                if 'description' in outcome:
+                                               if 'description' in outcome:
                                                     selection = f"{outcome['description']} - {outcome['name']} {outcome.get('point', '')} ({market_key})"
                                                 else:
-                                                    selection = f"{outcome['name']} ({market_key})"
+                                                    selection = f"{outcome['name']} {outcome.get('point', '')} ({market_key})"
                                                 
                                                 bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                                 
