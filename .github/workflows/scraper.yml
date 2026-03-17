@@ -2,9 +2,12 @@ name: Betting Engine Auto-Scanner
 
 on:
   schedule:
-    # Runs every 30 mins between 7am and 11pm AEDT (20:00 to 11:00 UTC)
-    - cron: '*/30 0-11,20-23 * * *'
-  workflow_dispatch: 
+    # NBA Morning Rush: Runs every 20 mins from 7am to 11am AEDT (20:00 to 23:59 UTC)
+    - cron: '*/20 20-23 * * *'
+    
+    # AFL/NRL Afternoon Drop: Runs every 20 mins from 3pm to 7pm AEDT (04:00 to 07:59 UTC)
+    - cron: '*/20 4-7 * * *'
+  workflow_dispatch:
 
 jobs:
   scan-odds:
