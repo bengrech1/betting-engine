@@ -33,6 +33,8 @@ for row in existing_rows:
 print(f"Found {len(existing_bets)} existing bets in the sheet.\n")
 
 API_KEY = os.environ.get('ODDS_API_KEY')
+DISCORD_WEBHOOK = os.environ.get('DISCORD_WEBHOOK')
+
 if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     exit()
@@ -62,7 +64,6 @@ for sport, markets in SPORT_MARKETS.items():
         for game in odds_json:
             matchup = f"{game.get('home_team', 'Unknown')} vs {game.get('away_team', 'Unknown')}"
             
-            # --- IGNORE LIVE GAMES ---
             commence_time = datetime.datetime.strptime(game['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
             if commence_time < datetime.datetime.utcnow():
                 continue 
@@ -94,8 +95,6 @@ for sport, markets in SPORT_MARKETS.items():
                                         for idx, outcome in enumerate(b_market['outcomes']):
                                             tp = tp_1 if idx == 0 else tp_2
                                             local_odds = outcome['price']
-                                            
-                                            # --- DATA UPGRADE: Capture Pinnacle's exact price ---
                                             pinnacle_price = pinnacle_outcomes[idx]['price']
                                             
                                             edge = (tp * local_odds) - 1
@@ -112,9 +111,9 @@ for sport, markets in SPORT_MARKETS.items():
                                                 bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                                 
                                                 if bet_id not in existing_bets:
-                                                    print(f"  🚨 NEW EDGE: {selection} at {bookie['title']} ({edge_formatted}) | Pinny: {pinnacle_price}")
+                                                    print(f"  🚨 NEW EDGE: {selection} at {bookie['title']} ({edge_formatted})")
                                                     
-                                                    # Pushes to Sheets: Matchup (A), Bookie (B), Selection (C), Odds (D), Target Stake (E - Blank for formula), Pinnacle (F), Edge (L)
+                                                    # Push to Sheets
                                                     row_data = [
                                                         matchup, bookie['title'], selection, local_odds, 
                                                         "", pinnacle_price, "", "", "", "", "", edge_formatted
@@ -122,6 +121,15 @@ for sport, markets in SPORT_MARKETS.items():
                                                     worksheet.append_row(row_data)
                                                     existing_bets.add(bet_id)
                                                     new_bets_logged += 1
+                                                    
+                                                    # --- DISCORD ALERT ---
+                                                    if DISCORD_WEBHOOK:
+                                                        discord_message = {
+                                                            "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
+                                                        }
+                                                        requests.post(DISCORD_WEBHOOK, json=discord_message)
+                                                    # ---------------------
+                                                    
                                                     time.sleep(1)
     else:
         print(f"  Failed to fetch data for {sport}. Status Code: {response.status_code}")
