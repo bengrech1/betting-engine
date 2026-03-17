@@ -23,18 +23,14 @@ except gspread.SpreadsheetNotFound:
     print(f"Error: Could not find a Google Sheet named '{SHEET_NAME}'.")
     exit()
 
-# --- DUPLICATE PREVENTION SETUP ---
 print("Fetching existing bets from the sheet to prevent duplicates...")
 existing_rows = worksheet.get_all_values()
-
-# Create a 'memory' of unique bets already in the sheet: Matchup + Bookie + Selection
 existing_bets = set()
 for row in existing_rows:
     if len(row) >= 3:
         unique_id = f"{row[0]}_{row[1]}_{row[2]}"
         existing_bets.add(unique_id)
 print(f"Found {len(existing_bets)} existing bets in the sheet.\n")
-# ----------------------------------
 
 API_KEY = os.environ.get('ODDS_API_KEY')
 if not API_KEY:
@@ -69,8 +65,7 @@ for sport, markets in SPORT_MARKETS.items():
             # --- IGNORE LIVE GAMES ---
             commence_time = datetime.datetime.strptime(game['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
             if commence_time < datetime.datetime.utcnow():
-                continue # Skips to the next game if this one has already started
-            # -------------------------
+                continue 
             
             for market_data in game.get('bookmakers', []):
                 for market in market_data.get('markets', []):
@@ -100,6 +95,9 @@ for sport, markets in SPORT_MARKETS.items():
                                             tp = tp_1 if idx == 0 else tp_2
                                             local_odds = outcome['price']
                                             
+                                            # --- DATA UPGRADE: Capture Pinnacle's exact price ---
+                                            pinnacle_price = pinnacle_outcomes[idx]['price']
+                                            
                                             edge = (tp * local_odds) - 1
                                             
                                             if edge >= MIN_EDGE:
@@ -111,22 +109,21 @@ for sport, markets in SPORT_MARKETS.items():
                                                 else:
                                                     selection = f"{outcome['name']} ({market_key})"
                                                 
-                                                # --- DUPLICATE CHECK LOGIC ---
                                                 bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                                 
                                                 if bet_id not in existing_bets:
-                                                    print(f"  🚨 NEW EDGE: {selection} at {bookie['title']} ({edge_formatted})")
+                                                    print(f"  🚨 NEW EDGE: {selection} at {bookie['title']} ({edge_formatted}) | Pinny: {pinnacle_price}")
+                                                    
+                                                    # Pushes to Sheets: Matchup (A), Bookie (B), Selection (C), Odds (D), Target Stake (E - Blank for formula), Pinnacle (F), Edge (L)
                                                     row_data = [
                                                         matchup, bookie['title'], selection, local_odds, 
-                                                        "", "", "", "", "", "", "", edge_formatted
+                                                        "", pinnacle_price, "", "", "", "", "", edge_formatted
                                                     ]
                                                     worksheet.append_row(row_data)
-                                                    existing_bets.add(bet_id) # Memorize it immediately
+                                                    existing_bets.add(bet_id)
                                                     new_bets_logged += 1
-                                                    time.sleep(1) # Keeps Google Sheets from blocking us
-                                                # -----------------------------
+                                                    time.sleep(1)
     else:
         print(f"  Failed to fetch data for {sport}. Status Code: {response.status_code}")
-        print(f"  Error Message: {response.text}")
 
 print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
