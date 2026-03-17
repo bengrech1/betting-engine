@@ -17,10 +17,11 @@ gc = gspread.service_account_from_dict(credentials_dict)
 
 SHEET_NAME = "BETTING"
 try:
-    worksheet = gc.open(SHEET_NAME).sheet1
-    print(f"Successfully connected to sheet: {SHEET_NAME}")
-except gspread.SpreadsheetNotFound:
-    print(f"Error: Could not find a Google Sheet named '{SHEET_NAME}'.")
+    # FIX 1: Laser targets the BOT FEED tab specifically
+    worksheet = gc.open(SHEET_NAME).worksheet("BOT FEED")
+    print(f"Successfully connected to sheet: BOT FEED")
+except gspread.WorksheetNotFound:
+    print(f"Error: Could not find a tab named 'BOT FEED'.")
     exit()
 
 print("Fetching existing bets from the sheet to prevent duplicates...")
@@ -43,7 +44,6 @@ REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
 MIN_EDGE = 0.02 
 
-# --- THE PROP HUNTER ARSENAL ---
 SPORT_MARKETS = {
     'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
     'aussierules_afl': 'h2h,player_disposals',
@@ -66,7 +66,6 @@ for sport, markets in SPORT_MARKETS.items():
     events = events_response.json()
     
     for event in events:
-        # --- IGNORE LIVE/PAST GAMES ---
         commence_time = datetime.datetime.strptime(event['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
         if commence_time < datetime.datetime.utcnow():
             continue 
@@ -75,7 +74,6 @@ for sport, markets in SPORT_MARKETS.items():
         matchup = f"{event.get('home_team', 'Unknown')} vs {event.get('away_team', 'Unknown')}"
         print(f"  Scanning {matchup}...")
         
-        # --- THE DEEP DIVE (EVENT ENDPOINT) ---
         odds_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/{event_id}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={markets}&oddsFormat={ODDS_FORMAT}'
         odds_response = requests.get(odds_url)
         
@@ -103,7 +101,8 @@ for sport, markets in SPORT_MARKETS.items():
                         tp_2 = ip_2 / total_market
                         
                         for bookie in game['bookmakers']:
-                            if bookie['title'] in ['Sportsbet', 'TAB', 'Neds', 'Ladbrokes', 'Betr']:
+                            # FIX 2: The New Upgraded Arsenal 
+                            if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Unibet']:
                                 for b_market in bookie['markets']:
                                     if b_market['key'] == market_key:
                                         for idx, outcome in enumerate(b_market['outcomes']):
@@ -127,16 +126,16 @@ for sport, markets in SPORT_MARKETS.items():
                                                 if bet_id not in existing_bets:
                                                     print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} ({edge_formatted}) | Pinny: {pinnacle_price}")
                                                     
-                                                    # Push to Sheets (Column E is blank for your Stake formula, F is Pinnacle, L is Edge)
                                                     row_data = [
                                                         matchup, bookie['title'], selection, local_odds, 
                                                         "", pinnacle_price, "", "", "", "", "", edge_formatted
                                                     ]
-                                                    worksheet.append_row(row_data)
+                                                    
+                                                    # FIX 3: Force paste into Row 2
+                                                    worksheet.insert_row(row_data, 2)
                                                     existing_bets.add(bet_id)
                                                     new_bets_logged += 1
                                                     
-                                                    # --- DISCORD ALERT ---
                                                     if DISCORD_WEBHOOK:
                                                         discord_message = {
                                                             "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
@@ -147,6 +146,6 @@ for sport, markets in SPORT_MARKETS.items():
         else:
             print(f"    Failed to fetch odds for {matchup}. Status: {odds_response.status_code}")
             
-        time.sleep(0.5) # Gentle pause between games to keep the API happy
+        time.sleep(0.5) 
 
 print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
