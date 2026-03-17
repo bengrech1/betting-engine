@@ -41,11 +41,13 @@ if not API_KEY:
 
 REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = -0.05 
+MIN_EDGE = 0.02 
 
+# --- THE PROP HUNTER ARSENAL ---
 SPORT_MARKETS = {
-    'basketball_nba': 'h2h,spreads,totals',
-    'aussierules_afl': 'h2h,spreads,totals',
+    'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
+    'aussierules_afl': 'h2h,player_disposals',
+    'rugbyleague_nrl': 'h2h,spreads,totals',
     'soccer_epl': 'h2h,spreads,totals'
 }
 
@@ -53,20 +55,32 @@ profitable_bets_found = 0
 new_bets_logged = 0
 
 for sport, markets in SPORT_MARKETS.items():
-    print(f"Scanning {sport} for markets: {markets}...")
-    url = f'https://api.the-odds-api.com/v4/sports/{sport}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={markets}&oddsFormat={ODDS_FORMAT}'
+    print(f"\nFetching schedule for {sport}...")
+    events_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/?apiKey={API_KEY}'
+    events_response = requests.get(events_url)
     
-    response = requests.get(url)
-    
-    if response.status_code == 200:
-        odds_json = response.json()
+    if events_response.status_code != 200:
+        print(f"  Failed to fetch schedule for {sport}. Status: {events_response.status_code}")
+        continue
         
-        for game in odds_json:
-            matchup = f"{game.get('home_team', 'Unknown')} vs {game.get('away_team', 'Unknown')}"
+    events = events_response.json()
+    
+    for event in events:
+        # --- IGNORE LIVE/PAST GAMES ---
+        commence_time = datetime.datetime.strptime(event['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
+        if commence_time < datetime.datetime.utcnow():
+            continue 
             
-            commence_time = datetime.datetime.strptime(game['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
-            if commence_time < datetime.datetime.utcnow():
-                continue 
+        event_id = event['id']
+        matchup = f"{event.get('home_team', 'Unknown')} vs {event.get('away_team', 'Unknown')}"
+        print(f"  Scanning {matchup}...")
+        
+        # --- THE DEEP DIVE (EVENT ENDPOINT) ---
+        odds_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/{event_id}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={markets}&oddsFormat={ODDS_FORMAT}'
+        odds_response = requests.get(odds_url)
+        
+        if odds_response.status_code == 200:
+            game = odds_response.json()
             
             for market_data in game.get('bookmakers', []):
                 for market in market_data.get('markets', []):
@@ -111,9 +125,9 @@ for sport, markets in SPORT_MARKETS.items():
                                                 bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                                 
                                                 if bet_id not in existing_bets:
-                                                    print(f"  🚨 NEW EDGE: {selection} at {bookie['title']} ({edge_formatted})")
+                                                    print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} ({edge_formatted}) | Pinny: {pinnacle_price}")
                                                     
-                                                    # Push to Sheets
+                                                    # Push to Sheets (Column E is blank for your Stake formula, F is Pinnacle, L is Edge)
                                                     row_data = [
                                                         matchup, bookie['title'], selection, local_odds, 
                                                         "", pinnacle_price, "", "", "", "", "", edge_formatted
@@ -128,10 +142,11 @@ for sport, markets in SPORT_MARKETS.items():
                                                             "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
                                                         }
                                                         requests.post(DISCORD_WEBHOOK, json=discord_message)
-                                                    # ---------------------
                                                     
                                                     time.sleep(1)
-    else:
-        print(f"  Failed to fetch data for {sport}. Status Code: {response.status_code}")
+        else:
+            print(f"    Failed to fetch odds for {matchup}. Status: {odds_response.status_code}")
+            
+        time.sleep(0.5) # Gentle pause between games to keep the API happy
 
 print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
