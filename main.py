@@ -41,7 +41,7 @@ if not API_KEY:
 
 REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = 0.02 
+MIN_EDGE = 0.015 
 
 SPORT_MARKETS = {
     'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
@@ -137,9 +137,12 @@ for sport, markets in SPORT_MARKETS.items():
                                             if bet_id not in existing_bets:
                                                 print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) | Pinny: ${pinnacle_price}")
                                                 
+                                                # THE UPGRADE: Python builds the Half-Kelly formula
+                                                stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
+                                                
                                                 row_data = [
                                                     matchup, bookie['title'], selection, local_odds, 
-                                                    "", pinnacle_price, "", "", "", "", "", edge_formatted
+                                                    stake_formula, pinnacle_price, "", "", "", "", "", edge_formatted
                                                 ]
                                                 
                                                 worksheet.insert_row(row_data, 2)
