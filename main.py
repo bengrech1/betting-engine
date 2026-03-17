@@ -109,7 +109,14 @@ for sport, markets in SPORT_MARKETS.items():
                                         for idx, outcome in enumerate(b_market['outcomes']):
                                             tp = tp_1 if idx == 0 else tp_2
                                             local_odds = outcome['price']
-                                            pinnacle_price = pinnacle_outcomes[idx]['price']
+                                            pinnacle_price = None
+                                                for p_out in pinnacle_outcomes:
+                                                    if p_out['name'] == outcome['name'] and p_out.get('point') == outcome.get('point') and p_out.get('description') == outcome.get('description'):
+                                                        pinnacle_price = p_out['price']
+                                                        break
+                                                
+                                                if pinnacle_price is None:
+                                                    continue
                                             
                                             edge = (tp * local_odds) - 1
                                             
