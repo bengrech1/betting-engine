@@ -41,7 +41,7 @@ if not API_KEY:
 
 REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = 0.02 
+MIN_EDGE = -0.05 
 
 SPORT_MARKETS = {
     'basketball_nba': 'h2h,spreads,totals',
