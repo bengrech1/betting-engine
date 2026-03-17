@@ -3,6 +3,7 @@ import json
 import gspread
 import requests
 import time
+import datetime
 
 print("Authenticating with GitHub Secrets...")
 
@@ -40,9 +41,9 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     exit()
 
-REGIONS = 'au,eu,us'
+REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = -0.05 
+MIN_EDGE = 0.02 
 
 SPORT_MARKETS = {
     'basketball_nba': 'h2h,spreads,totals',
@@ -64,6 +65,12 @@ for sport, markets in SPORT_MARKETS.items():
         
         for game in odds_json:
             matchup = f"{game.get('home_team', 'Unknown')} vs {game.get('away_team', 'Unknown')}"
+            
+            # --- IGNORE LIVE GAMES ---
+            commence_time = datetime.datetime.strptime(game['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
+            if commence_time < datetime.datetime.utcnow():
+                continue # Skips to the next game if this one has already started
+            # -------------------------
             
             for market_data in game.get('bookmakers', []):
                 for market in market_data.get('markets', []):
