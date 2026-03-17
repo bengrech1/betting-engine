@@ -45,8 +45,8 @@ MIN_EDGE = 0.02
 
 SPORT_MARKETS = {
     'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
-    'aussierules_afl': 'h2h,player_disposals',
-    'rugbyleague_nrl': 'h2h,spreads,totals',
+    'aussierules_afl': 'h2h,player_disposals,player_goal_scorer_anytime',
+    'rugbyleague_nrl': 'h2h,spreads,totals,player_try_scorer_anytime',
     'soccer_epl': 'h2h,spreads,totals'
 }
 
