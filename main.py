@@ -20,6 +20,7 @@ try:
     # FIX 1: Laser targets the BOT FEED tab specifically
     worksheet = gc.open(SHEET_NAME).worksheet("BOT FEED")
     print(f"Successfully connected to sheet: BOT FEED")
+    print(f"🚨 I AM WRITING TO THIS EXACT URL: {worksheet.spreadsheet.url}")
 except gspread.WorksheetNotFound:
     print(f"Error: Could not find a tab named 'BOT FEED'.")
     exit()
