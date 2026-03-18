@@ -23,14 +23,26 @@ except gspread.WorksheetNotFound:
     print(f"Error: Could not find a tab named 'BOT FEED'.")
     exit()
 
-print("Fetching existing bets from the sheet to prevent duplicates...")
-existing_rows = worksheet.get_all_values()
+print("Fetching existing bets from BOTH sheets to prevent duplicates...")
 existing_bets = set()
+
+# Scan the BOT FEED
+existing_rows = worksheet.get_all_values()
 for row in existing_rows:
     if len(row) >= 3:
-        unique_id = f"{row[0]}_{row[1]}_{row[2]}"
-        existing_bets.add(unique_id)
-print(f"Found {len(existing_bets)} existing bets in the sheet.\n")
+        existing_bets.add(f"{row[0]}_{row[1]}_{row[2]}")
+
+# Scan the TRACKER (This cures the amnesia)
+try:
+    tracker_sheet = gc.open(SHEET_NAME).worksheet("TRACKER")
+    tracker_rows = tracker_sheet.get_all_values()
+    for row in tracker_rows:
+        if len(row) >= 3:
+            existing_bets.add(f"{row[0]}_{row[1]}_{row[2]}")
+except gspread.WorksheetNotFound:
+    print("No TRACKER tab found yet, skipping.")
+
+print(f"Found {len(existing_bets)} total historical bets.\n")
 
 API_KEY = os.environ.get('ODDS_API_KEY')
 DISCORD_WEBHOOK = os.environ.get('DISCORD_WEBHOOK')
@@ -96,7 +108,7 @@ for sport, markets in SPORT_MARKETS.items():
                     if not pinnacle_outcomes:
                         continue
                     
-                    # 2. Calculate Total Market Juice (Handles 2-way and 3-way markets perfectly)
+                    # 2. Calculate Total Market Juice
                     total_market_implied = sum((1 / p['price']) for p in pinnacle_outcomes)
                     
                     # 3. Scan the Soft Books
@@ -138,27 +150,4 @@ for sport, markets in SPORT_MARKETS.items():
                                                 print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) | Pinny: ${pinnacle_price}")
                                                 
                                                 # THE UPGRADE: Python builds the Half-Kelly formula
-                                                stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
-                                                
-                                                row_data = [
-                                                    matchup, bookie['title'], selection, local_odds, 
-                                                    stake_formula, pinnacle_price, "", "", "", "", "", edge_formatted
-                                                ]
-                                                
-                                                worksheet.insert_row(row_data, 2, value_input_option='USER_ENTERED')
-                                                existing_bets.add(bet_id)
-                                                new_bets_logged += 1
-                                                
-                                                if DISCORD_WEBHOOK:
-                                                    discord_message = {
-                                                        "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
-                                                    }
-                                                    requests.post(DISCORD_WEBHOOK, json=discord_message)
-                                                
-                                                time.sleep(1)
-        else:
-            print(f"    Failed to fetch odds for {matchup}. Status: {odds_response.status_code}")
-            
-        time.sleep(0.5) 
-
-print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
+                                                stake_formula = f'=IFERROR(ROUND(({edge} / (
