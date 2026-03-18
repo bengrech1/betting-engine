@@ -150,4 +150,4 @@ for sport, markets in SPORT_MARKETS.items():
                                                 print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) | Pinny: ${pinnacle_price}")
                                                 
                                                 # THE UPGRADE: Python builds the Half-Kelly formula
-                                                stake_formula = f'=IFERROR(ROUND(({edge} / (
+                                                stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
