@@ -145,7 +145,7 @@ for sport, markets in SPORT_MARKETS.items():
                                                     stake_formula, pinnacle_price, "", "", "", "", "", edge_formatted
                                                 ]
                                                 
-                                                worksheet.insert_row(row_data, 2)
+                                                worksheet.insert_row(row_data, 2, value_input_option='USER_ENTERED')
                                                 existing_bets.add(bet_id)
                                                 new_bets_logged += 1
                                                 
