@@ -33,7 +33,7 @@ for row in existing_rows:
     if len(row) >= 3:
         existing_bets.add(f"{row[0]}_{row[1]}_{row[2]}")
 
-# Scan the TRACKER (This cures the amnesia)
+# Scan the TRACKER
 try:
     tracker_sheet = gc.open(SHEET_NAME).worksheet("TRACKER")
     tracker_rows = tracker_sheet.get_all_values()
@@ -70,7 +70,6 @@ for sport, markets in SPORT_MARKETS.items():
     print(f"\nFetching schedule for {sport}...")
     events_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/?apiKey={API_KEY}'
     
-    # TIMEOUT ADDED HERE
     try:
         events_response = requests.get(events_url, timeout=10)
     except requests.exceptions.RequestException as e:
@@ -85,16 +84,22 @@ for sport, markets in SPORT_MARKETS.items():
     
     for event in events:
         commence_time = datetime.datetime.strptime(event['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
-        if commence_time < datetime.datetime.utcnow():
+        now_utc = datetime.datetime.utcnow()
+        
+        # THE MONEY SAVER: Only scan games starting in the next 12 hours
+        cutoff_time = now_utc + datetime.timedelta(hours=12)
+        
+        if commence_time < now_utc or commence_time > cutoff_time:
             continue 
             
         event_id = event['id']
         matchup = f"{event.get('home_team', 'Unknown')} vs {event.get('away_team', 'Unknown')}"
         print(f"  Scanning {matchup}...")
         
-        odds_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/{event_id}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={markets}&oddsFormat={ODDS_FORMAT}'
+        # Pass the commenceTimeTo parameter to save API credits on the prop markets
+        time_limit_str = cutoff_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        odds_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/{event_id}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={markets}&oddsFormat={ODDS_FORMAT}&commenceTimeTo={time_limit_str}'
         
-        # TIMEOUT ADDED HERE (Prevents the silent hang)
         try:
             odds_response = requests.get(odds_url, timeout=10)
         except requests.exceptions.RequestException:
@@ -122,7 +127,8 @@ for sport, markets in SPORT_MARKETS.items():
                     total_market_implied = sum((1 / p['price']) for p in pinnacle_outcomes)
                     
                     for bookie in game['bookmakers']:
-                        if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Unibet' 'Neds' 'Bet365 AU' 'PlayUp']:
+                        # THE SYNTAX FIX: Perfectly comma-separated list, TABtouch removed
+                        if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Unibet', 'Neds', 'Ladbrokes', 'Bet365 AU', 'PlayUp', 'TABtouch']:
                             for b_market in bookie['markets']:
                                 if b_market['key'] == market_key:
                                     for outcome in b_market['outcomes']:
@@ -130,6 +136,7 @@ for sport, markets in SPORT_MARKETS.items():
                                         
                                         pinnacle_price = None
                                         for p_out in pinnacle_outcomes:
+                                            # Strict matching since we skipped the fuzzy logic
                                             if p_out['name'] == outcome['name'] and p_out.get('point') == outcome.get('point') and p_out.get('description') == outcome.get('description'):
                                                 pinnacle_price = p_out['price']
                                                 break
@@ -155,7 +162,6 @@ for sport, markets in SPORT_MARKETS.items():
                                             if bet_id not in existing_bets:
                                                 print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) | Pinny: ${pinnacle_price}")
                                                 
-                                                # Properly unbroken formula string
                                                 stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
                                                 
                                                 row_data = [
