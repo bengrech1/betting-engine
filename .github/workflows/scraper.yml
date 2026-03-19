@@ -1,32 +1,39 @@
-name: Betting Engine Auto-Scanner
+name: Automated EV Scanner
 
 on:
+  workflow_dispatch: # Keeps your manual "Run workflow" button active
   schedule:
-    # NBA Morning Rush: Runs every 20 mins from 7am to 11am AEDT (20:00 to 23:59 UTC)
-    - cron: '*/20 20-23 * * *'
-    
-    # AFL/NRL Afternoon Drop: Runs every 20 mins from 3pm to 7pm AEDT (04:00 to 07:59 UTC)
-    - cron: '*/20 4-7 * * *'
-  workflow_dispatch:
+    # 1. The NBA Morning Rush (Every Day)
+    # Runs every 20 minutes from 8:00 AM to 11:00 AM AEDT 
+    # (UTC: 21:00 to 23:59 the previous day)
+    - cron: '*/20 21-23 * * *'
+
+    # 2. The Aussie Evening Primer (Wednesday, Thursday, Friday)
+    # Runs every 30 minutes from 5:00 PM to 9:00 PM AEDT
+    # (UTC: 06:00 to 10:00)
+    - cron: '*/30 6-10 * * 3-5'
+
+    # 3. The Weekend Warzone (Saturday, Sunday)
+    # Runs every 30 minutes from 1:00 PM to 9:00 PM AEDT
+    # (UTC: 02:00 to 10:00)
+    - cron: '*/30 2-10 * * 6,0'
 
 jobs:
-  scan-odds:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
       - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests gspread
+        run: pip install requests gspread
 
-      - name: Run Betting Engine
+      - name: Run Scraper
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
