@@ -3,17 +3,9 @@ name: Automated EV Scanner
 on:
   workflow_dispatch: # Keeps your manual "Run workflow" button active
   schedule:
-    # 1. The NBA Morning Rush (Every Day)
-    # Runs every 5 minutes from 8:00 AM to 11:00 AM AEDT 
-    - cron: '*/5 21-23 * * *'
+    # MAX GITHUB ACTIONS FREQUENCY (Every 5 minutes, 24/7)
+    - cron: '*/5 * * * *'
 
-    # 2. The Aussie Evening Primer (Wednesday, Thursday, Friday)
-    # Runs every 15 minutes from 5:00 PM to 9:00 PM AEDT
-    - cron: '*/15 6-10 * * 3-5'
-
-    # 3. The Weekend Warzone (Saturday, Sunday)
-    # Runs every 10 minutes from 1:00 PM to 9:00 PM AEDT
-    - cron: '*/10 2-10 * * 6,0'
 jobs:
   run-bot:
     runs-on: ubuntu-latest
