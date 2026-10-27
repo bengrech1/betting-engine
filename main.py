@@ -86,8 +86,8 @@ for sport, markets in SPORT_MARKETS.items():
         commence_time = datetime.datetime.strptime(event['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
         now_utc = datetime.datetime.utcnow()
         
-        # THE MONEY SAVER: Only scan games starting in the next 12 hours
-        cutoff_time = now_utc + datetime.timedelta(hours=12)
+        # THE MONEY SAVER: Only scan games starting in the next 48 hours
+        cutoff_time = now_utc + datetime.timedelta(hours=48)
         
         if commence_time < now_utc or commence_time > cutoff_time:
             continue 
