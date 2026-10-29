@@ -56,8 +56,8 @@ REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
 MIN_EDGE = 0.015 
 
-# --- CONTROLLED GLOBAL ACTIVE SPORTS FETCHER (Mainstream Focus) ---
-print("Scanning The Odds API for active mainstream global sports...")
+# --- CONTROLLED TIER-1 SPORTS & LEAGUES FETCHER ---
+print("Scanning The Odds API for Tier-1 mainstream sports and major leagues...")
 active_sports_url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
 SPORT_MARKETS = {}
 
@@ -66,10 +66,21 @@ try:
     if active_response.status_code == 200:
         sports_data = active_response.json()
         
-        ALLOWED_GROUPS = [
-            'soccer', 'basketball', 'tennis', 'ice hockey', 
-            'cricket', 'rugby league', 'rugby union', 
-            'american football', 'baseball'
+        # Whitelist of specific high-liquidity sport keys to avoid obscure leagues
+        ALLOWED_SPORT_KEYS = [
+            'basketball_nba', 'basketball_nbl', 'basketball_euroleague',
+            'americanfootball_nfl', 'aussierules_afl',
+            'icehockey_nhl',  # Strictly NHL for hockey
+            'cricket_big_bash', 'cricket_ipl', 'cricket_international_t20', 'cricket_odi',
+            'rugbyleague_nrl', 'rugbyunion_super_rugby',
+            'baseball_mlb'
+        ]
+        
+        # Specific major soccer leagues only
+        ALLOWED_SOCCER_KEYS = [
+            'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
+            'soccer_germany_bundesliga', 'soccer_france_ligue_one',
+            'soccer_australia_aleague', 'soccer_uefa_champions_league'
         ]
         
         for sport in sports_data:
@@ -77,14 +88,14 @@ try:
                 key = sport['key']
                 group = sport.get('group', '').lower()
                 
-                # Only process mainstream sports to avoid account limits
-                if any(allowed in group for allowed in ALLOWED_GROUPS):
+                # Check if it's a whitelisted major sport or major soccer league
+                if key in ALLOWED_SPORT_KEYS or key in ALLOWED_SOCCER_KEYS or 'tennis' in group:
                     if 'tennis' in group:
                         SPORT_MARKETS[key] = 'h2h'
                     else:
                         SPORT_MARKETS[key] = 'h2h,spreads,totals'
                     
-        print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} mainstream active sports worldwide.")
+        print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} safe, Tier-1 mainstream leagues worldwide.")
     else:
         print("Failed to fetch active sports list. Using fallback.")
         SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
@@ -157,7 +168,7 @@ for sport, markets in SPORT_MARKETS.items():
                     total_market_implied = sum((1 / p['price']) for p in pinnacle_outcomes)
                     
                     for bookie in game['bookmakers']:
-                        if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Neds', 'Bet365 AU', 'PlayUp', 'TABtouch']:
+                        if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Neds', 'Bet365 AU', 'PlayUp', 'TABtouch', 'Betfair', 'Betfair Exchange']:
                             for b_market in bookie['markets']:
                                 if b_market['key'] == market_key:
                                     for outcome in b_market['outcomes']:
