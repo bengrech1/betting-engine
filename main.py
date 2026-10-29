@@ -185,7 +185,7 @@ for sport, markets in SPORT_MARKETS.items():
                                             bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                             
                                             if bet_id not in existing_bets:
-                                                print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) \vert{} Pinny:${pinnacle_price}")
+                                                print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) - Pinny: ${pinnacle_price}")
                                                 
                                                 stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
                                                 
@@ -202,4 +202,14 @@ for sport, markets in SPORT_MARKETS.items():
                                                     discord_message = {
                                                         "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
                                                     }
-                                                    requests
+                                                    requests.post(DISCORD_WEBHOOK, json=discord_message)
+                                                
+                                                time.sleep(1)
+        else:
+            print(f"    Failed to fetch odds for {matchup}. Status: {odds_response.status_code}")
+            
+        time.sleep(0.5) 
+
+print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
+sys.stdout.flush()
+time.sleep(2)
