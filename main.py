@@ -168,7 +168,7 @@ for sport, markets in SPORT_MARKETS.items():
                     total_market_implied = sum((1 / p['price']) for p in pinnacle_outcomes)
                     
                     for bookie in game['bookmakers']:
-                        if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Neds', 'Bet365 AU', 'PlayUp', 'TABtouch', 'Betfair', 'Betfair Exchange']:
+                        if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Neds', 'Bet365 AU', 'PlayUp', 'TABtouch']:
                             for b_market in bookie['markets']:
                                 if b_market['key'] == market_key:
                                     for outcome in b_market['outcomes']:
