@@ -61,7 +61,7 @@ print("Scanning The Odds API for ALL active global sports...")
 active_sports_url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
 SPORT_MARKETS = {}
 
-    try:
+try:
     active_response = requests.get(active_sports_url, timeout=10)
     if active_response.status_code == 200:
         sports_data = active_response.json()
@@ -93,7 +93,7 @@ except Exception as e:
 profitable_bets_found = 0
 new_bets_logged = 0
 
-    for sport, markets in SPORT_MARKETS.items():
+for sport, markets in SPORT_MARKETS.items():
     print(f"\nFetching schedule for {sport}...")
     events_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/?apiKey={API_KEY}'
     
@@ -154,7 +154,6 @@ new_bets_logged = 0
                     total_market_implied = sum((1 / p['price']) for p in pinnacle_outcomes)
                     
                     for bookie in game['bookmakers']:
-                        # THE SYNTAX FIX: Perfectly comma-separated list, TABtouch removed
                         if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Unibet', 'Neds', 'Ladbrokes', 'Bet365 AU', 'PlayUp', 'TABtouch']:
                             for b_market in bookie['markets']:
                                 if b_market['key'] == market_key:
@@ -163,7 +162,6 @@ new_bets_logged = 0
                                         
                                         pinnacle_price = None
                                         for p_out in pinnacle_outcomes:
-                                            # Strict matching since we skipped the fuzzy logic
                                             if p_out['name'] == outcome['name'] and p_out.get('point') == outcome.get('point') and p_out.get('description') == outcome.get('description'):
                                                 pinnacle_price = p_out['price']
                                                 break
@@ -187,7 +185,7 @@ new_bets_logged = 0
                                             bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                             
                                             if bet_id not in existing_bets:
-                                                print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) | Pinny: ${pinnacle_price}")
+                                                print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) \vert{} Pinny:${pinnacle_price}")
                                                 
                                                 stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
                                                 
@@ -204,14 +202,4 @@ new_bets_logged = 0
                                                     discord_message = {
                                                         "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
                                                     }
-                                                    requests.post(DISCORD_WEBHOOK, json=discord_message)
-                                                
-                                                time.sleep(1)
-        else:
-            print(f"    Failed to fetch odds for {matchup}. Status: {odds_response.status_code}")
-            
-        time.sleep(0.5) 
-
-print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
-sys.stdout.flush()
-time.sleep(2)
+                                                    requests
