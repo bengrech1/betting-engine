@@ -56,17 +56,44 @@ REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
 MIN_EDGE = 0.015 
 
-SPORT_MARKETS = {
-    'basketball_nba': 'h2h,player_points,player_rebounds,player_assists',
-    'aussierules_afl': 'h2h,player_disposals,player_goal_scorer_anytime',
-    'rugbyleague_nrl': 'h2h,spreads,totals,player_try_scorer_anytime',
-    'soccer_epl': 'h2h,spreads,totals'
-}
+# --- DYNAMIC GLOBAL ACTIVE SPORTS FETCHER ---
+print("Scanning The Odds API for ALL active global sports...")
+active_sports_url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
+SPORT_MARKETS = {}
+
+    try:
+    active_response = requests.get(active_sports_url, timeout=10)
+    if active_response.status_code == 200:
+        sports_data = active_response.json()
+        
+        for sport in sports_data:
+            # If the sport is currently active, add it to the scan list automatically
+            if sport.get('active', False):
+                key = sport['key']
+                group = sport.get('group', '').lower()
+                
+                # Automatically assign core liquid markets based on sport type to maximize edge volume safely
+                if 'soccer' in group or 'football' in group or 'basketball' in group:
+                    SPORT_MARKETS[key] = 'h2h,spreads,totals'
+                elif 'tennis' in group:
+                    SPORT_MARKETS[key] = 'h2h'
+                else:
+                    # Default for all other sports (cricket, rugby, hockey, baseball, etc.)
+                    SPORT_MARKETS[key] = 'h2h,spreads,totals'
+                    
+        print(f"Success! Automatically loaded {len(SPORT_MARKETS)} active sports worldwide for maximum volume scanning.")
+    else:
+        print("Failed to fetch active sports list. Using fallback.")
+        SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
+except Exception as e:
+    print(f"Error fetching active sports: {e}. Using fallback.")
+    SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
+# ---------------------------------------------
 
 profitable_bets_found = 0
 new_bets_logged = 0
 
-for sport, markets in SPORT_MARKETS.items():
+    for sport, markets in SPORT_MARKETS.items():
     print(f"\nFetching schedule for {sport}...")
     events_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/?apiKey={API_KEY}'
     
