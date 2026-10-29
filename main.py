@@ -56,8 +56,8 @@ REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
 MIN_EDGE = 0.015 
 
-# --- DYNAMIC GLOBAL ACTIVE SPORTS FETCHER ---
-print("Scanning The Odds API for ALL active global sports...")
+# --- CONTROLLED GLOBAL ACTIVE SPORTS FETCHER (Mainstream Focus) ---
+print("Scanning The Odds API for active mainstream global sports...")
 active_sports_url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
 SPORT_MARKETS = {}
 
@@ -66,29 +66,32 @@ try:
     if active_response.status_code == 200:
         sports_data = active_response.json()
         
+        ALLOWED_GROUPS = [
+            'soccer', 'basketball', 'tennis', 'ice hockey', 
+            'cricket', 'rugby league', 'rugby union', 
+            'american football', 'baseball'
+        ]
+        
         for sport in sports_data:
-            # If the sport is currently active, add it to the scan list automatically
             if sport.get('active', False):
                 key = sport['key']
                 group = sport.get('group', '').lower()
                 
-                # Automatically assign core liquid markets based on sport type to maximize edge volume safely
-                if 'soccer' in group or 'football' in group or 'basketball' in group:
-                    SPORT_MARKETS[key] = 'h2h,spreads,totals'
-                elif 'tennis' in group:
-                    SPORT_MARKETS[key] = 'h2h'
-                else:
-                    # Default for all other sports (cricket, rugby, hockey, baseball, etc.)
-                    SPORT_MARKETS[key] = 'h2h,spreads,totals'
+                # Only process mainstream sports to avoid account limits
+                if any(allowed in group for allowed in ALLOWED_GROUPS):
+                    if 'tennis' in group:
+                        SPORT_MARKETS[key] = 'h2h'
+                    else:
+                        SPORT_MARKETS[key] = 'h2h,spreads,totals'
                     
-        print(f"Success! Automatically loaded {len(SPORT_MARKETS)} active sports worldwide for maximum volume scanning.")
+        print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} mainstream active sports worldwide.")
     else:
         print("Failed to fetch active sports list. Using fallback.")
         SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
 except Exception as e:
     print(f"Error fetching active sports: {e}. Using fallback.")
     SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
-# ---------------------------------------------
+# -----------------------------------------------------------------
 
 profitable_bets_found = 0
 new_bets_logged = 0
@@ -154,7 +157,7 @@ for sport, markets in SPORT_MARKETS.items():
                     total_market_implied = sum((1 / p['price']) for p in pinnacle_outcomes)
                     
                     for bookie in game['bookmakers']:
-                        if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Unibet', 'Neds', 'Ladbrokes', 'Bet365 AU', 'PlayUp', 'TABtouch']:
+                        if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Neds', 'Bet365 AU', 'PlayUp', 'TABtouch']:
                             for b_market in bookie['markets']:
                                 if b_market['key'] == market_key:
                                     for outcome in b_market['outcomes']:
@@ -187,24 +190,47 @@ for sport, markets in SPORT_MARKETS.items():
                                             if bet_id not in existing_bets:
                                                 print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) - Pinny: ${pinnacle_price}")
                                                 
-                                                stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
+                                                # Stake formula capped at a maximum of 3% of total bankroll
+                                                stake_formula = f'=IFERROR(MIN(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), BANKROLL!$B$4 * 0.03), 0)'
                                                 
                                                 row_data = [
                                                     matchup, bookie['title'], selection, local_odds, 
                                                     stake_formula, pinnacle_price, "", "", "", "", "", edge_formatted
                                                 ]
                                                 
-                                                worksheet.insert_row(row_data, 2, value_input_option='USER_ENTERED')
-                                                existing_bets.add(bet_id)
-                                                new_bets_logged += 1
-                                                
-                                                if DISCORD_WEBHOOK:
-                                                    discord_message = {
-                                                        "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
-                                                    }
-                                                    requests.post(DISCORD_WEBHOOK, json=discord_message)
-                                                
-                                                time.sleep(1)
+                                                # Rate-limit safe insert with retry logic for Google Sheets 429 quotas
+                                                max_retries = 3
+                                                success = False
+                                                for attempt in range(max_retries):
+                                                    try:
+                                                        worksheet.insert_row(row_data, 2, value_input_option='USER_ENTERED')
+                                                        success = True
+                                                        break
+                                                    except gspread.exceptions.APIError as api_err:
+                                                        if "429" in str(api_err) or "Quota exceeded" in str(api_err):
+                                                            print(f"    ⚠️ Google Sheets rate limit (429) hit. Backing off for 10 seconds (Attempt {attempt+1}/{max_retries})...")
+                                                            time.sleep(10)
+                                                        else:
+                                                            print(f"    ⚠️ Google Sheets API Error: {api_err}")
+                                                            break
+                                                    except Exception as e:
+                                                        print(f"    ⚠️ Unexpected sheet write error: {e}")
+                                                        break
+
+                                                if success:
+                                                    existing_bets.add(bet_id)
+                                                    new_bets_logged += 1
+                                                    
+                                                    if DISCORD_WEBHOOK:
+                                                        discord_message = {
+                                                            "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
+                                                        }
+                                                        try:
+                                                            requests.post(DISCORD_WEBHOOK, json=discord_message, timeout=5)
+                                                        except Exception as webhook_err:
+                                                            print(f"    ⚠️ Discord webhook error: {webhook_err}")
+                                                    
+                                                    time.sleep(2)
         else:
             print(f"    Failed to fetch odds for {matchup}. Status: {odds_response.status_code}")
             
