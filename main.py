@@ -168,6 +168,7 @@ for sport, markets in SPORT_MARKETS.items():
                     total_market_implied = sum((1 / p['price']) for p in pinnacle_outcomes)
                     
                     for bookie in game['bookmakers']:
+                        # Soft bookies only (Betfair excluded)
                         if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Neds', 'Bet365 AU', 'PlayUp', 'TABtouch']:
                             for b_market in bookie['markets']:
                                 if b_market['key'] == market_key:
@@ -201,8 +202,8 @@ for sport, markets in SPORT_MARKETS.items():
                                             if bet_id not in existing_bets:
                                                 print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) - Pinny: ${pinnacle_price}")
                                                 
-                                                # Stake formula capped at a maximum of 3% of total bankroll
-                                                stake_formula = f'=IFERROR(MIN(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), BANKROLL!$B$4 * 0.03), 0)'
+                                                # Original half-Kelly formula targeting D2 without the 3% cap wrapper
+                                                stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
                                                 
                                                 row_data = [
                                                     matchup, bookie['title'], selection, local_odds, 
