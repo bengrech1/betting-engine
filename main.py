@@ -175,8 +175,6 @@ for sport, markets in SPORT_MARKETS.items():
                                     
                                     # --- ICE HOCKEY 2-WAY MARKET MATCHING SAFEGUARD ---
                                     if 'icehockey' in sport:
-                                        # Skip comparison if either bookie market outcome count doesn't match 
-                                        # (prevents matching 3-way regulation markets against 2-way OT included markets)
                                         if len(b_market.get('outcomes', [])) != len(pinnacle_outcomes):
                                             continue
                                     # --------------------------------------------------
@@ -209,7 +207,7 @@ for sport, markets in SPORT_MARKETS.items():
                                             bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                             
                                             if bet_id not in existing_bets:
-                                                print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) - Pinny:${pinnacle_price}")
+                                                print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) - Pinny: ${pinnacle_price}")
                                                 
                                                 # Original half-Kelly formula targeting D2 without the 3% cap wrapper
                                                 stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
@@ -224,4 +222,39 @@ for sport, markets in SPORT_MARKETS.items():
                                                 success = False
                                                 for attempt in range(max_retries):
                                                     try:
-                                                        worksheet.insert_row
+                                                        worksheet.insert_row(row_data, 2, value_input_option='USER_ENTERED')
+                                                        success = True
+                                                        break
+                                                    except gspread.exceptions.APIError as api_err:
+                                                        if "429" in str(api_err) or "Quota exceeded" in str(api_err):
+                                                            print(f"    ⚠️ Google Sheets rate limit (429) hit. Backing off for 10 seconds (Attempt {attempt+1}/{max_retries})...")
+                                                            time.sleep(10)
+                                                        else:
+                                                            print(f"    ⚠️ Google Sheets API Error: {api_err}")
+                                                            break
+                                                    except Exception as e:
+                                                        print(f"    ⚠️ Unexpected sheet write error: {e}")
+                                                        break
+
+                                                if success:
+                                                    existing_bets.add(bet_id)
+                                                    new_bets_logged += 1
+                                                    
+                                                    if DISCORD_WEBHOOK:
+                                                        discord_message = {
+                                                            "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
+                                                        }
+                                                        try:
+                                                            requests.post(DISCORD_WEBHOOK, json=discord_message, timeout=5)
+                                                        except Exception as webhook_err:
+                                                            print(f"    ⚠️ Discord webhook error: {webhook_err}")
+                                                    
+                                                    time.sleep(2)
+        else:
+            print(f"    Failed to fetch odds for {matchup}. Status: {odds_response.status_code}")
+            
+        time.sleep(0.5) 
+
+print(f"\nMaster Scan Complete! Found {profitable_bets_found} edges, logged {new_bets_logged} NEW bets.")
+sys.stdout.flush()
+time.sleep(2)
