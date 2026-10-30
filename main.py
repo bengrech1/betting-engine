@@ -156,6 +156,12 @@ for sport, markets in SPORT_MARKETS.items():
                 for market in market_data.get('markets', []):
                     market_key = market['key']
                     
+                    # --- ICE HOCKEY TOTALS SAFEGUARD ---
+                    # Skip totals for ice hockey to avoid regulation vs OT-included discrepancies
+                    if 'icehockey' in sport and market_key == 'totals':
+                        continue
+                    # -----------------------------------
+                    
                     pinnacle_outcomes = []
                     for b in game['bookmakers']:
                         if b['title'] == 'Pinnacle':
