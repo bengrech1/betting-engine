@@ -66,7 +66,7 @@ try:
     if active_response.status_code == 200:
         sports_data = active_response.json()
         
-        # Whitelist of specific high-liquidity sport keys to avoid obscure leagues
+        # Whitelist of specific high-liquidity sport keys (NFL included)
         ALLOWED_SPORT_KEYS = [
             'basketball_nba', 'basketball_nbl', 'basketball_euroleague',
             'americanfootball_nfl', 'aussierules_afl',
@@ -90,18 +90,20 @@ try:
                 
                 # Check if it's a whitelisted major sport or major soccer league
                 if key in ALLOWED_SPORT_KEYS or key in ALLOWED_SOCCER_KEYS or 'tennis' in group:
-                    if 'tennis' in group:
+                    if 'tennis' in group or key in ['basketball_nbl', 'basketball_euroleague', 'cricket_big_bash', 'cricket_ipl', 'cricket_international_t20', 'cricket_odi', 'rugbyleague_nrl', 'rugbyunion_super_rugby', 'soccer_australia_aleague']:
+                        # Restrict minor/regional leagues to h2h only to protect account longevity & save credits
                         SPORT_MARKETS[key] = 'h2h'
                     else:
-                        SPORT_MARKETS[key] = 'h2h,spreads,totals'
+                        # Major mainstream leagues get h2h and totals (spreads completely removed)
+                        SPORT_MARKETS[key] = 'h2h,totals'
                     
         print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} safe, Tier-1 mainstream leagues worldwide.")
     else:
         print("Failed to fetch active sports list. Using fallback.")
-        SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
+        SPORT_MARKETS = {'basketball_nba': 'h2h,totals', 'soccer_epl': 'h2h,totals'}
 except Exception as e:
     print(f"Error fetching active sports: {e}. Using fallback.")
-    SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
+    SPORT_MARKETS = {'basketball_nba': 'h2h,totals', 'soccer_epl': 'h2h,totals'}
 # -----------------------------------------------------------------
 
 profitable_bets_found = 0
@@ -137,7 +139,7 @@ for sport, markets in SPORT_MARKETS.items():
         matchup = f"{event.get('home_team', 'Unknown')} vs {event.get('away_team', 'Unknown')}"
         print(f"   Scanning {matchup}...")
         
-        # Pass the commenceTimeTo parameter to save API credits on the prop markets
+        # Pass the commenceTimeTo parameter to save API credits on prop markets
         time_limit_str = cutoff_time.strftime('%Y-%m-%dT%H:%M:%SZ')
         odds_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/{event_id}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={markets}&oddsFormat={ODDS_FORMAT}&commenceTimeTo={time_limit_str}'
         
