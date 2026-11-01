@@ -52,8 +52,8 @@ LEAGUE_TO_SPORT_KEY = {
     "wnbl": "basketball_wnbl"
 }
 
-# Bookmaker fallback list (Pinnacle primary for sharp CLV, plus major EU/UK/US books)
-TARGET_BOOKMAKERS = ["pinnacle", "bet365", "pinnacle_us", "draftkings", "fanduel", "unibet", "williamhill"]
+# Bookmaker priority (Pinnacle first for sharp lines, plus major global books)
+TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
 
 # 1. Load existing CLV tab values
 col_a = clv_sheet.col_values(1)
@@ -124,9 +124,9 @@ if new_appends:
     clv_sheet.update(f"{start_cell}:{end_cell}", new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
-print("Fetching true historical closing odds...")
+print("Fetching true historical closing odds via single-event historical route...")
 
-# 3. Fetch Historical CLV using the correct historical endpoint architecture
+# 3. Fetch Historical CLV using the Direct Single-Event Historical Endpoint
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
@@ -145,7 +145,7 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 print(f"  ⚠️ Warning: League '{league_val}' not mapped to sport key.")
                 continue
 
-            # Step 1: Hit standard events route to get commence_time safely
+            # Step 1: Fetch event details to get the exact commence time
             event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
             event_res = requests.get(event_url, timeout=10)
             
@@ -154,19 +154,18 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 commence_str = event_res.json().get('commence_time')
 
             if commence_str:
-                # Step 2: Step back 10 minutes from kickoff so we get the final closing odds before suspension
+                # Step 2: Step back 10 minutes from kickoff to grab pre-game closing odds
                 dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
                 closing_target_dt = dt - datetime.timedelta(minutes=10)
                 formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-                # Step 3: Query The Odds API Historical Endpoint directly
-                hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/odds'
+                # Step 3: Query the exact Single-Event Historical Odds Endpoint
+                hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds'
                 params = {
                     'apiKey': API_KEY,
                     'regions': 'eu,us,uk,au',
                     'markets': 'h2h',
                     'oddsFormat': 'decimal',
-                    'eventIds': event_id,
                     'date': formatted_date
                 }
                 
@@ -174,31 +173,31 @@ for idx, row in enumerate(clv_data[1:], start=2):
 
                 if hist_res.status_code == 200:
                     hist_payload = hist_res.json()
-                    # The historical endpoint nests data in a dictionary: {'timestamp': '...', 'data': [...]}
-                    events = hist_payload.get('data', [])
-
+                    # Single-event historical endpoint wraps the target game data inside 'data'
+                    event_data = hist_payload.get('data', {})
+                    
                     found_closing = False
-                    for event_data in events:
-                        bookmakers = {b['key']: b for b in event_data.get('bookmakers', [])}
-                        
-                        for b_key in TARGET_BOOKMAKERS:
-                            if b_key in bookmakers:
-                                bookie_obj = bookmakers[b_key]
-                                for market in bookie_obj.get('markets', []):
-                                    for outcome in market.get('outcomes', []):
-                                        outcome_name = outcome['name'].strip()
-                                        if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
-                                            closing_price = outcome['price']
-                                            clv_sheet.update_cell(idx, 4, closing_price)
-                                            print(f"    ✅ Captured Closing Line ({b_key}) for Row {idx} ({bet_sel}): {closing_price}")
-                                            found_closing = True
-                                            break
-                                    if found_closing:
+                    bookmakers = {b['key']: b for b in event_data.get('bookmakers', [])}
+                    
+                    for b_key in TARGET_BOOKMAKERS:
+                        if b_key in bookmakers:
+                            bookie_obj = bookmakers[b_key]
+                            for market in bookie_obj.get('markets', []):
+                                for outcome in market.get('outcomes', []):
+                                    outcome_name = outcome['name'].strip()
+                                    if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                        closing_price = outcome['price']
+                                        clv_sheet.update_cell(idx, 4, closing_price)
+                                        print(f"    ✅ Captured Closing Line ({b_key}) for Row {idx} ({bet_sel}): {closing_price}")
+                                        found_closing = True
                                         break
-                            if found_closing:
-                                break
+                                if found_closing:
+                                    break
+                        if found_closing:
+                            break
+                            
                     if not found_closing:
-                        print(f"    ⚠️ Snapshot found, but team/bookie market data wasn't matched for event {event_id}")
+                        print(f"    ⚠️ Snapshot found, but selection '{bet_sel}' didn't match any bookmaker outcome for event {event_id}")
                 else:
                     print(f"    ⚠️ Historical API error {hist_res.status_code}: {hist_res.text}")
             else:
