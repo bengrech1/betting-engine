@@ -4,6 +4,7 @@ import gspread
 import requests
 import time
 import sys
+from gspread.exceptions import APIError
 
 print("Authenticating with GitHub Secrets for CLV Updater...")
 
@@ -16,12 +17,26 @@ credentials_dict = json.loads(gcp_credentials_json)
 gc = gspread.service_account_from_dict(credentials_dict)
 
 SHEET_NAME = "BETTING"
+
+# Helper function to retry if Google throws a transient 500 Internal Error
+def open_sheet_with_retry(gc, sheet_name, retries=3, delay=3):
+    for attempt in range(retries):
+        try:
+            return gc.open(sheet_name)
+        except Exception as e:
+            print(f"  ⚠️ Google API error on attempt {attempt+1}/{retries}: {e}")
+            if attempt == retries - 1:
+                raise e
+            time.sleep(delay)
+
 try:
-    tracker_sheet = gc.open(SHEET_NAME).worksheet("TRACKER")
-    clv_sheet = gc.open(SHEET_NAME).worksheet("CLV")
+    print(f"Connecting to Google Sheet '{SHEET_NAME}'...")
+    spreadsheet = open_sheet_with_retry(gc, SHEET_NAME)
+    tracker_sheet = spreadsheet.worksheet("TRACKER")
+    clv_sheet = spreadsheet.worksheet("CLV")
     print("Successfully connected to TRACKER and CLV tabs.")
-except gspread.WorksheetNotFound as e:
-    print(f"Error finding worksheet: {e}")
+except Exception as e:
+    print(f"Critical error connecting to Google Sheets: {e}")
     sys.exit(1)
 
 API_KEY = os.environ.get('ODDS_API_KEY')
@@ -30,7 +45,6 @@ if not API_KEY:
     sys.exit(1)
 
 # League to Odds API Sport Key mapping dictionary
-# Add any other leagues you bet on here!
 LEAGUE_TO_SPORT_KEY = {
     "nbl": "basketball_nbl",
     "nba": "basketball_nba",
@@ -64,11 +78,10 @@ try:
     selection_idx = header.index("Selection")
     odds_idx = header.index("Odds")
     event_id_idx = header.index("Event ID")
-    # Attempt to find league column dynamically, fallback to index if named differently
     try:
         league_idx = header.index("League")
     except ValueError:
-        league_idx = header.index("Sport") if "Sport" in header else 4 # adjust if needed
+        league_idx = header.index("Sport") if "Sport" in header else 4
 except ValueError as e:
     print(f"Header mapping error: {e}")
     game_idx, bookie_idx, selection_idx, odds_idx, event_id_idx, league_idx = 0, 1, 2, 3, 13, 4
@@ -86,7 +99,6 @@ for row in tracker_rows[1:]:
     selection = row[selection_idx]
     placed_odds = row[odds_idx]
     event_id = row[event_id_idx]
-    league_name = row[league_idx].strip().lower() if len(row) > league_idx else ""
 
     if not event_id:
         continue
@@ -97,7 +109,6 @@ for row in tracker_rows[1:]:
         target_row = current_next_row + len(new_appends)
         formula_edge = f"=IFERROR((C{target_row}/D{target_row})-1, \"\")"
         
-        # Store league name/sport key or metadata if needed, but standard 6 cols are fine
         new_row = [selection, bookie, float(placed_odds) if placed_odds else "", "", formula_edge, event_id]
         new_appends.append(new_row)
         existing_clv_keys[clv_key] = {
@@ -122,7 +133,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
         event_id = row[5].strip()
 
         if event_id and (not clv_price or clv_price == "" or clv_price == "0"):
-            # Find the corresponding tracker row to look up its league
             t_row = next((r for r in tracker_rows[1:] if len(r) > event_id_idx and r[event_id_idx] == event_id), None)
             if not t_row:
                 continue
@@ -136,7 +146,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
 
             print(f"  Querying historical archive for Event ID {event_id} under sport '{sport_key}'...")
 
-            # 1. Get historical event details to retrieve exact commence time
             details_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
             det_res = requests.get(details_url, timeout=10)
             
@@ -145,7 +154,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 commence_time = det_json.get('data', {}).get('commence_time') or det_json.get('commence_time')
                 
                 if commence_time:
-                    # 2. Query historical odds at the exact commence time snapshot for Pinnacle
                     hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/odds'
                     params = {
                         'apiKey': API_KEY,
@@ -173,6 +181,10 @@ for idx, row in enumerate(clv_data[1:], start=2):
                                                 clv_sheet.update_cell(idx, 4, closing_price)
                                                 print(f"    ✅ Captured True Closing Line for Row {idx}: {closing_price}")
                                                 break
+                                        if found_closing:
+                                            break
+                                if found_closing:
+                                    break
             time.sleep(0.1)
 
 print("\nCLV Update Complete!")
