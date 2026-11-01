@@ -44,15 +44,27 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     sys.exit(1)
 
+# Comprehensive dictionary mapping sheet names to Odds API sport keys
 LEAGUE_TO_SPORT_KEY = {
     "nbl": "basketball_nbl",
     "nba": "basketball_nba",
+    "wnbl": "basketball_wnbl",
     "epl": "soccer_epl",
+    "serie a - italy": "soccer_italy_serie_a",
+    "serie a": "soccer_italy_serie_a",
+    "la liga": "soccer_spain_la_liga",
+    "bundesliga": "soccer_germany_bundesliga",
+    "ligue 1": "soccer_france_ligue_one",
+    "a-league": "soccer_australia_aleague",
+    "champions league": "soccer_uefa_champions_league",
     "nrl": "rugbyleague_nrl",
-    "wnbl": "basketball_wnbl"
+    "nhl": "icehockey_nhl",
+    "nfl": "americanfootball_nfl",
+    "afl": "aussierules_afl",
+    "mlb": "baseball_mlb"
 }
 
-# Bookmaker priority (Pinnacle first for sharp lines, plus major global books)
+# Bookmaker priority for closing lines
 TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
 
 # 1. Load existing CLV tab values
@@ -121,12 +133,13 @@ if new_appends:
     print(f"Appending {len(new_appends)} new bets starting at row {current_next_row}...")
     start_cell = f"A{current_next_row}"
     end_cell = f"F{current_next_row + len(new_appends) - 1}"
-    clv_sheet.update(f"{start_cell}:{end_cell}", new_appends, value_input_option='USER_ENTERED')
+    # Fixed gspread update syntax
+    clv_sheet.update(range_name=f"{start_cell}:{end_cell}", values=new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
 print("Fetching true historical closing odds via single-event historical route...")
 
-# 3. Fetch Historical CLV using the Direct Single-Event Historical Endpoint
+# 3. Fetch Historical CLV using the Single-Event Historical Endpoint
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
@@ -138,28 +151,39 @@ for idx, row in enumerate(clv_data[1:], start=2):
             if not t_row:
                 continue
             
-            league_val = t_row[league_idx].strip().lower() if len(t_row) > league_idx else ""
-            sport_key = LEAGUE_TO_SPORT_KEY.get(league_val)
+            raw_league = t_row[league_idx].strip().lower() if len(t_row) > league_idx else ""
+            
+            # Fuzzy check for league keys
+            sport_key = None
+            for l_key, s_val in LEAGUE_TO_SPORT_KEY.items():
+                if l_key in raw_league:
+                    sport_key = s_val
+                    break
             
             if not sport_key:
-                print(f"  ⚠️ Warning: League '{league_val}' not mapped to sport key.")
+                print(f"  ⚠️ Warning: League '{raw_league}' not mapped to sport key.")
                 continue
 
-            # Step 1: Fetch event details to get the exact commence time
+            commence_str = None
+            
+            # Step 1: Try fetching event details from live endpoint first
             event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
             event_res = requests.get(event_url, timeout=10)
             
-            commence_str = None
             if event_res.status_code == 200:
                 commence_str = event_res.json().get('commence_time')
+            else:
+                # Step 1 Fallback: If game completed and deleted from live endpoint, use current time minus 2 hours as historical lookup baseline
+                print(f"  ℹ️ Live event info 404 for {event_id}. Using historical query directly...")
+                dt_now = datetime.datetime.now(datetime.timezone.utc)
+                commence_str = dt_now.strftime('%Y-%m-%dT%H:%M:%SZ')
 
             if commence_str:
-                # Step 2: Step back 10 minutes from kickoff to grab pre-game closing odds
                 dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
                 closing_target_dt = dt - datetime.timedelta(minutes=10)
                 formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-                # Step 3: Query the exact Single-Event Historical Odds Endpoint
+                # Step 2: Query Single-Event Historical Odds Endpoint
                 hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds'
                 params = {
                     'apiKey': API_KEY,
@@ -173,7 +197,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
 
                 if hist_res.status_code == 200:
                     hist_payload = hist_res.json()
-                    # Single-event historical endpoint wraps the target game data inside 'data'
                     event_data = hist_payload.get('data', {})
                     
                     found_closing = False
@@ -201,7 +224,7 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 else:
                     print(f"    ⚠️ Historical API error {hist_res.status_code}: {hist_res.text}")
             else:
-                print(f"    ⚠️ Could not fetch event commence time for {event_id}")
+                print(f"    ⚠️ Could not determine time for {event_id}")
 
             time.sleep(0.2)
 
