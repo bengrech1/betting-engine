@@ -66,17 +66,15 @@ try:
     if active_response.status_code == 200:
         sports_data = active_response.json()
         
-        # Whitelist of specific high-liquidity sport keys (NFL included)
         ALLOWED_SPORT_KEYS = [
             'basketball_nba', 'basketball_nbl', 'basketball_euroleague',
             'americanfootball_nfl', 'aussierules_afl',
-            'icehockey_nhl',  # Strictly NHL for hockey
+            'icehockey_nhl',
             'cricket_big_bash', 'cricket_ipl', 'cricket_international_t20', 'cricket_odi',
             'rugbyleague_nrl', 'rugbyunion_super_rugby',
             'baseball_mlb'
         ]
         
-        # Specific major soccer leagues only
         ALLOWED_SOCCER_KEYS = [
             'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
             'soccer_germany_bundesliga', 'soccer_france_ligue_one',
@@ -88,13 +86,10 @@ try:
                 key = sport['key']
                 group = sport.get('group', '').lower()
                 
-                # Check if it's a whitelisted major sport or major soccer league
                 if key in ALLOWED_SPORT_KEYS or key in ALLOWED_SOCCER_KEYS or 'tennis' in group:
                     if 'tennis' in group or key in ['basketball_nbl', 'basketball_euroleague', 'cricket_big_bash', 'cricket_ipl', 'cricket_international_t20', 'cricket_odi', 'rugbyleague_nrl', 'rugbyunion_super_rugby', 'soccer_australia_aleague']:
-                        # Restrict minor/regional leagues to h2h only to protect account longevity & save credits
                         SPORT_MARKETS[key] = 'h2h'
                     else:
-                        # Major mainstream leagues get h2h and totals (spreads completely removed)
                         SPORT_MARKETS[key] = 'h2h,totals'
                     
         print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} safe, Tier-1 mainstream leagues worldwide.")
@@ -129,7 +124,6 @@ for sport, markets in SPORT_MARKETS.items():
         commence_time = datetime.datetime.strptime(event['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
         now_utc = datetime.datetime.utcnow()
         
-        # THE MONEY SAVER: Only scan games starting in the next 48 hours
         cutoff_time = now_utc + datetime.timedelta(hours=48)
         
         if commence_time < now_utc or commence_time > cutoff_time:
@@ -139,7 +133,6 @@ for sport, markets in SPORT_MARKETS.items():
         matchup = f"{event.get('home_team', 'Unknown')} vs {event.get('away_team', 'Unknown')}"
         print(f"    Scanning {matchup}...")
         
-        # Pass the commenceTimeTo parameter to save API credits on prop markets
         time_limit_str = cutoff_time.strftime('%Y-%m-%dT%H:%M:%SZ')
         odds_url = f'https://api.the-odds-api.com/v4/sports/{sport}/events/{event_id}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={markets}&oddsFormat={ODDS_FORMAT}&commenceTimeTo={time_limit_str}'
         
@@ -151,57 +144,50 @@ for sport, markets in SPORT_MARKETS.items():
             
         if odds_response.status_code == 200:
             game = odds_response.json()
-            
-            # Extract league/sport title from response (e.g., "NBA", "EPL", "NRL")
             league_title = game.get('sport_title', sport)
             
             for market_data in game.get('bookmakers', []):
                 for market in market_data.get('markets', []):
                     market_key = market['key']
                     
-                    # --- ICE HOCKEY TOTALS SAFEGUARD ---
                     if 'icehockey' in sport and market_key == 'totals':
                         continue
-                    # -----------------------------------
                     
-                    pinnacle_outcomes = []
+                    pin_outcomes = []
                     for b in game['bookmakers']:
                         if b['title'] == 'Pinnacle':
                             for m in b['markets']:
                                 if m['key'] == market_key:
-                                    pinnacle_outcomes = m['outcomes']
+                                    pin_outcomes = m['outcomes']
                                     break
                     
-                    if not pinnacle_outcomes:
+                    if not pin_outcomes:
                         continue
                     
-                    total_market_implied = sum((1 / p['price']) for p in pinnacle_outcomes)
+                    total_market_implied = sum((1 / p['price']) for p in pin_outcomes)
                     
                     for bookie in game['bookmakers']:
-                        # Soft bookies only (Betfair excluded)
                         if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Neds', 'Bet365 AU', 'PlayUp', 'TABtouch']:
                             for b_market in bookie['markets']:
                                 if b_market['key'] == market_key:
                                     
-                                    # --- ICE HOCKEY 2-WAY MARKET MATCHING SAFEGUARD ---
                                     if 'icehockey' in sport:
-                                        if len(b_market.get('outcomes', [])) != len(pinnacle_outcomes):
+                                        if len(b_market.get('outcomes', [])) != len(pin_outcomes):
                                             continue
-                                    # --------------------------------------------------
 
                                     for outcome in b_market['outcomes']:
                                         local_odds = outcome['price']
                                         
-                                        pinnacle_price = None
-                                        for p_out in pinnacle_outcomes:
+                                        pin_price = None
+                                        for p_out in pin_outcomes:
                                             if p_out['name'] == outcome['name'] and p_out.get('point') == outcome.get('point') and p_out.get('description') == outcome.get('description'):
-                                                pinnacle_price = p_out['price']
+                                                pin_price = p_out['price']
                                                 break
                                                 
-                                        if pinnacle_price is None:
+                                        if pin_price is None:
                                             continue
                                             
-                                        raw_prob = 1 / pinnacle_price
+                                        raw_prob = 1 / pin_price
                                         true_prob = raw_prob / total_market_implied
                                         edge = (true_prob * local_odds) - 1
                                         
@@ -217,17 +203,16 @@ for sport, markets in SPORT_MARKETS.items():
                                             bet_id = f"{matchup}_{bookie['title']}_{selection}"
                                             
                                             if bet_id not in existing_bets:
-                                                print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) - Pinny: ${pinnacle_price}")
+                                                print(f"    🚨 NEW EDGE: {selection} at {bookie['title']} @ ${local_odds} ({edge_formatted}) - Pinny: ${pin_price}")
                                                 
-                                                # Original half-Kelly formula targeting D2 without the 3% cap wrapper
                                                 stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
                                                 
+                                                # Event ID added as the 14th element (Column N)
                                                 row_data = [
                                                     matchup, bookie['title'], selection, local_odds, 
-                                                    stake_formula, pinnacle_price, "", "", "", "", "", edge_formatted, league_title
+                                                    stake_formula, pin_price, "", "", "", "", "", edge_formatted, league_title, event_id
                                                 ]
                                                 
-                                                # Rate-limit safe insert with retry logic for Google Sheets 429 quotas
                                                 max_retries = 3
                                                 success = False
                                                 for attempt in range(max_retries):
@@ -252,7 +237,7 @@ for sport, markets in SPORT_MARKETS.items():
                                                     
                                                     if DISCORD_WEBHOOK:
                                                         discord_message = {
-                                                            "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**League:** {league_title}\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
+                                                            "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**League:** {league_title}\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pin_price}"
                                                         }
                                                         try:
                                                             requests.post(DISCORD_WEBHOOK, json=discord_message, timeout=5)
