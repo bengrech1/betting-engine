@@ -214,12 +214,12 @@ for sport, markets in SPORT_MARKETS.items():
                                                     local_odds,              # Col D (4)
                                                     stake_formula,           # Col E (5)
                                                     pin_price,               # Col F (6)
-                                                    "", "", "", "", "",      # Cols G-K (7-11)
-                                                    edge_formatted,          # Col L (12)
-                                                    event_id,                # Col M (13)
-                                                    sport,                   # Col N (14)
-                                                    "", "", "",              # Cols O-Q (15-17)
-                                                    event['commence_time']   # Col R (18) - Commence Time timestamp
+                                                    "", "", "", "", "",      # Cols G-K (7-11: Result, Actual Stake, P/L, Date, Notes)
+                                                    edge_formatted,          # Col L (12: Edge %)
+                                                    league_title,            # Col M (13: League)
+                                                    event_id,                # Col N (14: Event ID)
+                                                    "", "", "",              # Cols O-Q (15-17: ($EV), Cum. Actual P/L, Cum. Expected P/L)
+                                                    event['commence_time']   # Col R (18: Commence Time timestamp)
                                                 ]
                                                 
                                                 max_retries = 3
