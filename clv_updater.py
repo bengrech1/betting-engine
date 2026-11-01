@@ -4,6 +4,7 @@ import gspread
 import requests
 import time
 import sys
+from datetime import datetime
 
 print("Authenticating with GitHub Secrets for CLV Updater...")
 
@@ -29,20 +30,18 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     sys.exit(1)
 
-# 1. Load existing A:F values from CLV tab
-col_a = clv_sheet.col_values(1)  # Get all values in Column A
+# 1. Load existing CLV tab values
+col_a = clv_sheet.col_values(1)
 existing_clv_rows_count = len(col_a)
-
 clv_data = clv_sheet.get_all_values()
 existing_clv_keys = {}
 
-# Map existing Event ID + Bet + Bookmaker to row index
-for idx, row in enumerate(clv_data[1:], start=2):  # Skip header row
-    if len(row) >= 6 and row[5]:  # Column F is Event ID
-        key = f"{row[5]}_{row[1]}_{row[0]}".strip()  # EventID_Bookmaker_Bet
+for idx, row in enumerate(clv_data[1:], start=2):
+    if len(row) >= 6 and row[5]:
+        key = f"{row[5]}_{row[1]}_{row[0]}".strip()
         existing_clv_keys[key] = {
             'row_index': idx,
-            'clv_val': row[3] if len(row) > 3 else ""  # Column D is CLV
+            'clv_val': row[3] if len(row) > 3 else ""
         }
 
 # 2. Read bets from TRACKER tab
@@ -67,7 +66,6 @@ for row in tracker_rows[1:]:
     if len(row) <= event_id_idx:
         continue
     
-    matchup = row[game_idx]
     bookie = row[bookie_idx]
     selection = row[selection_idx]
     placed_odds = row[odds_idx]
@@ -80,7 +78,6 @@ for row in tracker_rows[1:]:
 
     if clv_key not in existing_clv_keys:
         target_row = current_next_row + len(new_appends)
-        # Use IFERROR to prevent #DIV/0! when Column D is blank
         formula_edge = f"=IFERROR((C{target_row}/D{target_row})-1, \"\")"
         
         new_row = [selection, bookie, float(placed_odds) if placed_odds else "", "", formula_edge, event_id]
@@ -95,54 +92,63 @@ if new_appends:
     start_cell = f"A{current_next_row}"
     end_cell = f"F{current_next_row + len(new_appends) - 1}"
     clv_sheet.update(f"{start_cell}:{end_cell}", new_appends, value_input_option='USER_ENTERED')
-    
-    # Refresh clv_data
     clv_data = clv_sheet.get_all_values()
 
-print("Checking Pinnacle closing odds for pending bets...")
+print("Fetching true historical closing odds for concluded/past bets...")
 
-# Re-scan CLV sheet rows to find blanks in Column D
+# Get list of all sports to map event IDs to sport keys
+sports_url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
+sports_res = requests.get(sports_url, timeout=10)
+sport_keys = [s['key'] for s in sports_res.json()] if sports_res.status_code == 200 else []
+
+# Scan CLV sheet rows to find blanks in Column D (CLV)
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
-        bookie_name = row[1]
         clv_price = row[3] if len(row) > 3 else ""
         event_id = row[5].strip()
 
         if event_id and (not clv_price or clv_price == "" or clv_price == "0"):
-            print(f"  Fetching closing odds for Event ID {event_id} ({bet_sel})...")
+            print(f"  Searching historical data for Event ID {event_id} ({bet_sel})...")
             
-            # Fetch event odds directly across regions
-            event_odds_url = f'https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={API_KEY}&regions=eu,us,uk&eventIds={event_id}&bookmakers=pinnacle&oddsFormat=decimal'
-            
-            try:
-                event_res = requests.get(event_odds_url, timeout=10)
-                if event_res.status_code == 200:
-                    events = event_res.json()
-                    found_closing = False
+            found_closing = False
+            for sport_key in sport_keys:
+                # First, check event details to get exact commence time
+                event_details_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
+                detail_res = requests.get(event_details_url, timeout=10)
+                
+                if detail_res.status_code == 200:
+                    event_info = detail_res.json()
+                    commence_time = event_info.get('commence_time')
                     
-                    for event_data in events:
-                        for bookmaker in event_data.get('bookmakers', []):
-                            if bookmaker.get('key') == 'pinnacle':
-                                for market in bookmaker.get('markets', []):
-                                    for outcome in market.get('outcomes', []):
-                                        outcome_name = outcome['name'].strip()
-                                        # Clean matching logic
-                                        if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
-                                            closing_price = outcome['price']
-                                            clv_sheet.update_cell(idx, 4, closing_price)
-                                            print(f"    ✅ Updated CLV for Row {idx}: {closing_price}")
-                                            found_closing = True
+                    if commence_time:
+                        # Query historical odds at the exact commence time (closing line snapshot)
+                        hist_odds_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds?apiKey={API_KEY}&regions=eu,us,uk,au&markets=h2h&oddsFormat=decimal&date={commence_time}'
+                        hist_res = requests.get(hist_odds_url, timeout=10)
+                        
+                        if hist_res.status_code == 200:
+                            hist_data = hist_res.json()
+                            # Historical endpoint returns data inside a snapshot wrapper
+                            bookmakers = hist_data.get('data', {}).get('bookmakers', []) or hist_data.get('bookmakers', [])
+                            
+                            for bookmaker in bookmakers:
+                                if bookmaker.get('key') == 'pinnacle':
+                                    for market in bookmaker.get('markets', []):
+                                        for outcome in market.get('outcomes', []):
+                                            outcome_name = outcome['name'].strip()
+                                            if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                                closing_price = outcome['price']
+                                                clv_sheet.update_cell(idx, 4, closing_price)
+                                                print(f"    ✅ Captured Pinnacle Closing Line for Row {idx}: {closing_price}")
+                                                found_closing = True
+                                                break
+                                        if found_closing:
                                             break
-                                    if found_closing:
-                                        break
-                            if found_closing:
-                                break
-                else:
-                    print(f"    ⚠️ API response {event_res.status_code} for event {event_id}")
-                time.sleep(0.3)
-            except Exception as e:
-                print(f"    ⚠️ Error fetching CLV for event {event_id}: {e}")
+                                if found_closing:
+                                    break
+                if found_closing:
+                    break
+                time.sleep(0.2)
 
 print("\nCLV Update Complete!")
 sys.stdout.flush()
