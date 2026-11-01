@@ -1,0 +1,27 @@
+name: Run CLV Updater
+
+on:
+  workflow_dispatch: # This creates a manual "Run Workflow" button in the GitHub Actions tab
+
+jobs:
+  run-clv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install gspread requests
+
+      - name: Run CLV script
+        env:
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          python clv_updater.py
