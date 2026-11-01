@@ -116,11 +116,11 @@ for sport, markets in SPORT_MARKETS.items():
     try:
         events_response = requests.get(events_url, timeout=10)
     except requests.exceptions.RequestException as e:
-        print(f"   API Timeout or Error fetching schedule for {sport}: {e}")
+        print(f"    API Timeout or Error fetching schedule for {sport}: {e}")
         continue
         
     if events_response.status_code != 200:
-        print(f"   Failed to fetch schedule for {sport}. Status: {events_response.status_code}")
+        print(f"    Failed to fetch schedule for {sport}. Status: {events_response.status_code}")
         continue
         
     events = events_response.json()
@@ -137,7 +137,7 @@ for sport, markets in SPORT_MARKETS.items():
             
         event_id = event['id']
         matchup = f"{event.get('home_team', 'Unknown')} vs {event.get('away_team', 'Unknown')}"
-        print(f"   Scanning {matchup}...")
+        print(f"    Scanning {matchup}...")
         
         # Pass the commenceTimeTo parameter to save API credits on prop markets
         time_limit_str = cutoff_time.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -152,12 +152,14 @@ for sport, markets in SPORT_MARKETS.items():
         if odds_response.status_code == 200:
             game = odds_response.json()
             
+            # Extract league/sport title from response (e.g., "NBA", "EPL", "NRL")
+            league_title = game.get('sport_title', sport)
+            
             for market_data in game.get('bookmakers', []):
                 for market in market_data.get('markets', []):
                     market_key = market['key']
                     
                     # --- ICE HOCKEY TOTALS SAFEGUARD ---
-                    # Skip totals for ice hockey to avoid regulation vs OT-included discrepancies
                     if 'icehockey' in sport and market_key == 'totals':
                         continue
                     # -----------------------------------
@@ -222,7 +224,7 @@ for sport, markets in SPORT_MARKETS.items():
                                                 
                                                 row_data = [
                                                     matchup, bookie['title'], selection, local_odds, 
-                                                    stake_formula, pinnacle_price, "", "", "", "", "", edge_formatted
+                                                    stake_formula, pinnacle_price, "", "", "", "", "", edge_formatted, league_title
                                                 ]
                                                 
                                                 # Rate-limit safe insert with retry logic for Google Sheets 429 quotas
@@ -250,7 +252,7 @@ for sport, markets in SPORT_MARKETS.items():
                                                     
                                                     if DISCORD_WEBHOOK:
                                                         discord_message = {
-                                                            "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
+                                                            "content": f"🚨 **NEW EDGE: {edge_formatted}** 🚨\n**League:** {league_title}\n**Game:** {matchup}\n**Bet:** {selection}\n**Bookie:** {bookie['title']} @ **${local_odds}**\n**Pinnacle:** ${pinnacle_price}"
                                                         }
                                                         try:
                                                             requests.post(DISCORD_WEBHOOK, json=discord_message, timeout=5)
