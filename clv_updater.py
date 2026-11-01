@@ -66,8 +66,18 @@ LEAGUE_TO_SPORT_KEY = {
 
 TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
 
+def normalize_team_name(name):
+    """Expands common shorthand abbreviations to match official API naming feeds"""
+    if not name:
+        return ""
+    n = name.lower().strip()
+    # Normalize common abbreviations
+    n = n.replace("s.e.", "south east").replace("se ", "south east ")
+    n = n.replace("nz ", "new zealand ")
+    return n
+
 def similar(a, b):
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    return SequenceMatcher(None, normalize_team_name(a), normalize_team_name(b)).ratio()
 
 # 1. Load existing CLV tab values
 col_a = clv_sheet.col_values(1)
@@ -138,9 +148,9 @@ if new_appends:
     clv_sheet.update(range_name=f"{start_cell}:{end_cell}", values=new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
-print("Fetching true historical closing odds via historical snapshots with fuzzy name matching...")
+print("Fetching true historical closing odds via historical snapshots with normalized fuzzy matching...")
 
-# 3. Fetch Historical CLV using Historical Snapshot Query with Fuzzy Logic
+# 3. Fetch Historical CLV using Historical Snapshot Query with Normalized Fuzzy Logic
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
@@ -202,19 +212,18 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 matched_event = None
                 highest_score = 0.0
                 
-                # Fuzzy score evaluation across API game list
+                # Fuzzy score evaluation with normalized names
                 for ev in events_list:
                     ev_home = ev.get('home_team', '')
                     ev_away = ev.get('away_team', '')
                     
-                    # Calculate aggregate similarity score for home & away strings
                     score = (similar(sheet_home, ev_home) + similar(sheet_away, ev_away)) / 2
                     if score > highest_score:
                         highest_score = score
                         matched_event = ev
 
-                # Accept match if overall name similarity is greater than 55%
-                if matched_event and highest_score > 0.55:
+                # Accept match if name similarity is greater than 50% after normalization
+                if matched_event and highest_score > 0.50:
                     found_closing = False
                     bookmakers = {b['key']: b for b in matched_event.get('bookmakers', [])}
                     
@@ -239,7 +248,7 @@ for idx, row in enumerate(clv_data[1:], start=2):
                     if not found_closing:
                         print(f"    ⚠️ Snapshot found for game, but selection '{bet_sel}' didn't match outcome names.")
                 else:
-                    print(f"    ⚠️ Could not find fuzzy-matching game for '{game_matchup}' (Best score: {round(highest_score*100)}%)")
+                    print(f"    ⚠️ Could not find fuzzy-matching game for '{game_matchup}' (Best normalized score: {round(highest_score*100)}%)")
             else:
                 print(f"    ⚠️ Historical Snapshot API error {hist_res.status_code}: {hist_res.text}")
 
