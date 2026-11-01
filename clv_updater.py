@@ -5,6 +5,7 @@ import requests
 import time
 import sys
 import datetime
+from difflib import SequenceMatcher
 from gspread.exceptions import APIError
 
 print("Authenticating with GitHub Secrets for Historical Snapshot CLV Updater...")
@@ -64,6 +65,9 @@ LEAGUE_TO_SPORT_KEY = {
 }
 
 TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
+
+def similar(a, b):
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 # 1. Load existing CLV tab values
 col_a = clv_sheet.col_values(1)
@@ -134,9 +138,9 @@ if new_appends:
     clv_sheet.update(range_name=f"{start_cell}:{end_cell}", values=new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
-print("Fetching true historical closing odds via historical snapshot snapshots...")
+print("Fetching true historical closing odds via historical snapshots with fuzzy name matching...")
 
-# 3. Fetch Historical CLV using Historical Snapshot Query by Date & Team Matching
+# 3. Fetch Historical CLV using Historical Snapshot Query with Fuzzy Logic
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
@@ -164,41 +168,22 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 print(f"  ⚠️ Could not parse matchup format from '{game_matchup}'")
                 continue
             
-            home_team, away_team = game_matchup.split(" vs ", 1)
-            home_team = home_team.strip().lower()
-            away_team = away_team.strip().lower()
+            sheet_home, sheet_away = game_matchup.split(" vs ", 1)
 
             commence_str = None
-            
-            # Try to get the real commence time from live endpoint; if it fails (game passed), 
-            # fallback to fetching the current timestamp or extracting from historical list.
             event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
             event_res = requests.get(event_url, timeout=10)
             
             if event_res.status_code == 200:
                 commence_str = event_res.json().get('commence_time')
-            else:
-                # If game already ended, look up using current time offset or use a default past snapshot window 
-                # (Alternatively, you can store commence_time in your tracker sheet directly when placing bets).
-                # For now, let's look up using the historical endpoint with a recent or estimated timeframe, 
-                # or query the historical sport odds list directly:
-                pass
-
-            # If we don't have commence_str from live, we can fallback to checking recent historical snapshots.
-            # But wait: to query historical odds cleanly, we need a date timestamp. Let's make sure your main bot 
-            # writes the commence time into your TRACKER sheet so you never have to guess it.
-            # Let's check if commence time is available in tracker row, or query historical snapshot.
             
-            # As a bulletproof fallback if commence_str is missing: check if there's a timestamp column or use current time minus 1 day.
             if not commence_str:
-                # Fallback: check if we can query historical odds for today/yesterday snapshots
                 commence_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
             closing_target_dt = dt - datetime.timedelta(minutes=10)
             formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-            # Query Historical Odds Snapshot Endpoint (Bulk list for the sport at that time)
             hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/odds'
             params = {
                 'apiKey': API_KEY,
@@ -215,14 +200,21 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 events_list = hist_payload.get('data', [])
                 
                 matched_event = None
+                highest_score = 0.0
+                
+                # Fuzzy score evaluation across API game list
                 for ev in events_list:
-                    ev_home = ev.get('home_team', '').strip().lower()
-                    ev_away = ev.get('away_team', '').strip().lower()
-                    if home_team in ev_home or ev_home in home_team or away_team in ev_away or ev_away in away_team:
+                    ev_home = ev.get('home_team', '')
+                    ev_away = ev.get('away_team', '')
+                    
+                    # Calculate aggregate similarity score for home & away strings
+                    score = (similar(sheet_home, ev_home) + similar(sheet_away, ev_away)) / 2
+                    if score > highest_score:
+                        highest_score = score
                         matched_event = ev
-                        break
 
-                if matched_event:
+                # Accept match if overall name similarity is greater than 55%
+                if matched_event and highest_score > 0.55:
                     found_closing = False
                     bookmakers = {b['key']: b for b in matched_event.get('bookmakers', [])}
                     
@@ -233,10 +225,10 @@ for idx, row in enumerate(clv_data[1:], start=2):
                                 if market['key'] == 'h2h':
                                     for outcome in market.get('outcomes', []):
                                         outcome_name = outcome['name'].strip()
-                                        if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                        if similar(outcome_name, bet_sel) > 0.4 or outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
                                             closing_price = outcome['price']
                                             clv_sheet.update_cell(idx, 4, closing_price)
-                                            print(f"    ✅ Captured Historical Closing Line ({b_key}) for Row {idx} ({bet_sel}): {closing_price}")
+                                            print(f"    ✅ Captured Historical Closing Line ({b_key}) for Row {idx} ({bet_sel}) [Match Score: {round(highest_score*100)}%]: {closing_price}")
                                             found_closing = True
                                             break
                                 if found_closing:
@@ -247,7 +239,7 @@ for idx, row in enumerate(clv_data[1:], start=2):
                     if not found_closing:
                         print(f"    ⚠️ Snapshot found for game, but selection '{bet_sel}' didn't match outcome names.")
                 else:
-                    print(f"    ⚠️ Could not find matching game in historical snapshot for {home_team} vs {away_team}")
+                    print(f"    ⚠️ Could not find fuzzy-matching game for '{game_matchup}' (Best score: {round(highest_score*100)}%)")
             else:
                 print(f"    ⚠️ Historical Snapshot API error {hist_res.status_code}: {hist_res.text}")
 
