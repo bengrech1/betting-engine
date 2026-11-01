@@ -18,7 +18,6 @@ gc = gspread.service_account_from_dict(credentials_dict)
 
 SHEET_NAME = "BETTING"
 
-# Helper function to retry if Google throws a transient 500 Internal Error
 def open_sheet_with_retry(gc, sheet_name, retries=3, delay=3):
     for attempt in range(retries):
         try:
@@ -44,7 +43,6 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     sys.exit(1)
 
-# League to Odds API Sport Key mapping dictionary
 LEAGUE_TO_SPORT_KEY = {
     "nbl": "basketball_nbl",
     "nba": "basketball_nba",
@@ -107,7 +105,7 @@ for row in tracker_rows[1:]:
 
     if clv_key not in existing_clv_keys:
         target_row = current_next_row + len(new_appends)
-        formula_edge = f"=IFERROR((C{target_row}/D{target_row})-1, \"\")"
+        formula_edge = f'=IFERROR((C{target_row}/D{target_row})-1, "")'
         
         new_row = [selection, bookie, float(placed_odds) if placed_odds else "", "", formula_edge, event_id]
         new_appends.append(new_row)
@@ -125,7 +123,7 @@ if new_appends:
 
 print("Fetching true historical closing odds via mapped sport keys...")
 
-# Scan CLV sheet rows to find blanks in Column D (CLV)
+# 3. Fetch Historical CLV
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
@@ -144,48 +142,60 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 print(f"  ⚠️ Warning: League '{league_val}' not mapped to a sport key in script dictionary.")
                 continue
 
+            # First, fetch event details/commence time from event endpoint or historical odds snapshot
+            # Correct historical endpoint syntax:
+            # We call the historical odds endpoint directly with ISO timestamp or query current event commence time
             print(f"  Querying historical archive for Event ID {event_id} under sport '{sport_key}'...")
 
-            details_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
-            det_res = requests.get(details_url, timeout=10)
+            # Fetch event details using current/events endpoint if available, or fallback to historical request timestamp
+            event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
+            event_res = requests.get(event_url, timeout=10)
             
-            if det_res.status_code == 200:
-                det_json = det_res.json()
-                commence_time = det_json.get('data', {}).get('commence_time') or det_json.get('commence_time')
+            commence_time = None
+            if event_res.status_code == 200:
+                commence_time = event_res.json().get('commence_time')
+            
+            # If historical query is needed and commence_time is found:
+            if commence_time:
+                hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/odds'
+                params = {
+                    'apiKey': API_KEY,
+                    'regions': 'eu,au,us,uk',
+                    'markets': 'h2h',
+                    'oddsFormat': 'decimal',
+                    'eventIds': event_id,
+                    'bookmakers': 'pinnacle',
+                    'date': commence_time
+                }
+                hist_res = requests.get(hist_url, params=params, timeout=10)
                 
-                if commence_time:
-                    hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/odds'
-                    params = {
-                        'apiKey': API_KEY,
-                        'regions': 'eu,au,us,uk',
-                        'markets': 'h2h',
-                        'oddsFormat': 'decimal',
-                        'eventIds': event_id,
-                        'bookmakers': 'pinnacle',
-                        'date': commence_time
-                    }
-                    hist_res = requests.get(hist_url, params=params, timeout=10)
+                if hist_res.status_code == 200:
+                    hist_json = hist_res.json()
+                    events = hist_json.get('data', [])
                     
-                    if hist_res.status_code == 200:
-                        hist_json = hist_res.json()
-                        events = hist_json.get('data', [])
-                        
-                        for event_data in events:
-                            for bookmaker in event_data.get('bookmakers', []):
-                                if bookmaker.get('key') == 'pinnacle':
-                                    for market in bookmaker.get('markets', []):
-                                        for outcome in market.get('outcomes', []):
-                                            outcome_name = outcome['name'].strip()
-                                            if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
-                                                closing_price = outcome['price']
-                                                clv_sheet.update_cell(idx, 4, closing_price)
-                                                print(f"    ✅ Captured True Closing Line for Row {idx}: {closing_price}")
-                                                break
-                                        if found_closing:
+                    found_closing = False
+                    for event_data in events:
+                        for bookmaker in event_data.get('bookmakers', []):
+                            if bookmaker.get('key') == 'pinnacle':
+                                for market in bookmaker.get('markets', []):
+                                    for outcome in market.get('outcomes', []):
+                                        outcome_name = outcome['name'].strip()
+                                        if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                            closing_price = outcome['price']
+                                            clv_sheet.update_cell(idx, 4, closing_price)
+                                            print(f"    ✅ Captured True Closing Line for Row {idx}: {closing_price}")
+                                            found_closing = True
                                             break
-                                if found_closing:
-                                    break
-            time.sleep(0.1)
+                                    if found_closing:
+                                        break
+                            if found_closing:
+                                break
+                        if found_closing:
+                            break
+            else:
+                print(f"  ⚠️ Could not determine commence_time for Event ID {event_id} (Status {event_res.status_code})")
+            
+            time.sleep(0.2)
 
 print("\nCLV Update Complete!")
 sys.stdout.flush()
