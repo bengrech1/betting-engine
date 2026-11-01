@@ -70,11 +70,9 @@ def normalize_tokens(name):
     if not name:
         return set()
     n = name.lower().strip()
-    # Normalize common abbreviations and symbols
     n = n.replace("s.e.", "south east").replace("se ", "south east ")
     n = n.replace("nz ", "new zealand ")
-    # Remove punctuation chars
-    for char in ['.', ',', '-', "'", '"']:
+    for char in ['.', ',', '-', "'", '"', '(', ')']:
         n = n.replace(char, ' ')
     return set(n.split())
 
@@ -110,26 +108,18 @@ tracker_rows = tracker_sheet.get_all_values()
 header = tracker_rows[0]
 
 try:
-    game_idx = header.index("Game")
-    bookie_idx = header.index("Bookmaker")
-    selection_idx = header.index("Selection")
-    odds_idx = header.index("Odds")
-    event_id_idx = header.index("Event ID")
+    game_idx = header.index("Game") if "Game" in header else 0
+    bookie_idx = header.index("Bookmaker") if "Bookmaker" in header else 1
+    selection_idx = header.index("Selection") if "Selection" in header else 2
+    odds_idx = header.index("Odds") if "Odds" in header else 3
     
-    try:
-        league_idx = header.index("League")
-    except ValueError:
-        league_idx = header.index("Sport") if "Sport" in header else 4
+    # Matching exact main.py screenshot layout
+    league_idx = header.index("League") if "League" in header else 12          # Col M (13th element)
+    event_id_idx = header.index("Event ID") if "Event ID" in header else 13      # Col N (14th element)
+    commence_time_idx = header.index("Commence Time") if "Commence Time" in header else 17 # Col R (18th element)
 
-    # STEP 2 CHANGE: Dynamically read 'Commence Time' from sheet header
-    try:
-        commence_time_idx = header.index("Commence Time")
-    except ValueError:
-        commence_time_idx = 14  # Default fallback index if header isn't named explicitly
-
-except ValueError as e:
-    print(f"Header mapping error: {e}")
-    game_idx, bookie_idx, selection_idx, odds_idx, event_id_idx, league_idx, commence_time_idx = 0, 1, 2, 3, 13, 4, 14
+except Exception as e:
+    game_idx, bookie_idx, selection_idx, odds_idx, league_idx, event_id_idx, commence_time_idx = 0, 1, 2, 3, 12, 13, 17
 
 print(f"Scanning {len(tracker_rows)-1} bets from TRACKER for CLV sync...")
 
@@ -190,8 +180,11 @@ for idx, row in enumerate(clv_data[1:], start=2):
                     break
             
             if not sport_key:
-                print(f"  ⚠️ Warning: League '{raw_league}' not mapped to sport key.")
-                continue
+                if raw_league in LEAGUE_TO_SPORT_KEY.values():
+                    sport_key = raw_league
+                else:
+                    print(f"  ⚠️ Warning: League '{raw_league}' not mapped to sport key.")
+                    continue
 
             game_matchup = t_row[game_idx] if len(t_row) > game_idx else ""
             if " vs " not in game_matchup:
@@ -200,17 +193,14 @@ for idx, row in enumerate(clv_data[1:], start=2):
             
             sheet_home, sheet_away = game_matchup.split(" vs ", 1)
 
-            # STEP 2 CHANGE: Read stored commence_time from tracker row first
             commence_str = t_row[commence_time_idx].strip() if len(t_row) > commence_time_idx else None
             
-            # If not in sheet, attempt live endpoint lookup (for currently active games)
             if not commence_str:
                 event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
                 event_res = requests.get(event_url, timeout=10)
                 if event_res.status_code == 200:
                     commence_str = event_res.json().get('commence_time')
             
-            # Fallback if both are missing
             if not commence_str:
                 commence_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -219,7 +209,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
             except ValueError:
                 dt = datetime.datetime.now(datetime.timezone.utc)
 
-            # Target 10 minutes prior to actual game commencement time
             closing_target_dt = dt - datetime.timedelta(minutes=10)
             formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -241,7 +230,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 matched_event = None
                 highest_score = 0.0
                 
-                # Token-set overlap evaluation across API game list
                 for ev in events_list:
                     ev_home = ev.get('home_team', '')
                     ev_away = ev.get('away_team', '')
@@ -251,7 +239,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
                         highest_score = score
                         matched_event = ev
 
-                # Accept match if token intersection is greater than 40% overlap
                 if matched_event and highest_score > 0.40:
                     found_closing = False
                     bookmakers = {b['key']: b for b in matched_event.get('bookmakers', [])}
@@ -266,8 +253,7 @@ for idx, row in enumerate(clv_data[1:], start=2):
                                         outcome_name = outcome['name'].strip()
                                         outcome_tokens = normalize_tokens(outcome_name)
                                         
-                                        # Check token intersection for selection matching
-                                        if bet_tokens.intersection(outcome_tokens) or outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                        if outcome_tokens.issubset(bet_tokens) or outcome_name.lower() in bet_sel.lower():
                                             closing_price = outcome['price']
                                             clv_sheet.update_cell(idx, 4, closing_price)
                                             print(f"    ✅ Captured Historical Closing Line ({b_key}) for Row {idx} ({bet_sel}) [Target Date: {formatted_date} | Match Score: {round(highest_score*100)}%]: {closing_price}")
