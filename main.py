@@ -207,10 +207,19 @@ for sport, markets in SPORT_MARKETS.items():
                                                 
                                                 stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
                                                 
-                                                # Event ID added as the 14th element (Column N)
                                                 row_data = [
-                                                    matchup, bookie['title'], selection, local_odds, 
-                                                    stake_formula, pin_price, "", "", "", "", "", edge_formatted, league_title, event_id
+                                                    matchup,                 # Col A (1)
+                                                    bookie['title'],         # Col B (2)
+                                                    selection,               # Col C (3)
+                                                    local_odds,              # Col D (4)
+                                                    stake_formula,           # Col E (5)
+                                                    pin_price,               # Col F (6)
+                                                    "", "", "", "", "",      # Cols G-K (7-11)
+                                                    edge_formatted,          # Col L (12)
+                                                    event_id,                # Col M (13)
+                                                    sport,                   # Col N (14)
+                                                    "", "", "",              # Cols O-Q (15-17)
+                                                    event['commence_time']   # Col R (18) - Commence Time timestamp
                                                 ]
                                                 
                                                 max_retries = 3
