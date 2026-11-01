@@ -29,23 +29,26 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     sys.exit(1)
 
-# 1. Load existing rows from CLV tab to check what's already there
-clv_rows = clv_sheet.get_all_values()
-# Map existing Event ID + Bet + Bookmaker to row index so we know what to update
+# 1. Load existing A:F values from CLV tab
+col_a = clv_sheet.col_values(1)  # Get all values in Column A
+existing_clv_rows_count = len(col_a)
+
+clv_data = clv_sheet.get_all_values()
 existing_clv_keys = {}
-for idx, row in enumerate(clv_rows[1:], start=2):  # Skip header row
+
+# Map existing Event ID + Bet + Bookmaker to row index
+for idx, row in enumerate(clv_data[1:], start=2):  # Skip header row
     if len(row) >= 6 and row[5]:  # Column F is Event ID
-        key = f"{row[5]}_{row[1]}_{row[0]}"  # EventID_Bookmaker_Bet
+        key = f"{row[5]}_{row[1]}_{row[0]}".strip()  # EventID_Bookmaker_Bet
         existing_clv_keys[key] = {
             'row_index': idx,
-            'clv_val': row[3]  # Column D is CLV[cite: 9]
+            'clv_val': row[3] if len(row) > 3 else ""  # Column D is CLV
         }
 
-# 2. Read all bets from TRACKER tab
+# 2. Read bets from TRACKER tab
 tracker_rows = tracker_sheet.get_all_values()
 header = tracker_rows[0]
 
-# Find column indices dynamically in TRACKER
 try:
     game_idx = header.index("Game")
     bookie_idx = header.index("Bookmaker")
@@ -53,12 +56,12 @@ try:
     odds_idx = header.index("Odds")
     event_id_idx = header.index("Event ID")
 except ValueError:
-    # Fallback default positions based on standard layout
     game_idx, bookie_idx, selection_idx, odds_idx, event_id_idx = 0, 1, 2, 3, 13
 
 print(f"Scanning {len(tracker_rows)-1} bets from TRACKER for CLV sync...")
 
 new_appends = []
+current_next_row = max(existing_clv_rows_count + 1, 2)
 
 for row in tracker_rows[1:]:
     if len(row) <= event_id_idx:
@@ -71,81 +74,73 @@ for row in tracker_rows[1:]:
     event_id = row[event_id_idx]
 
     if not event_id:
-        continue  # Skip if no event ID recorded
+        continue
 
-    clv_key = f"{event_id}_{bookie}_{selection}"
+    clv_key = f"{event_id}_{bookie}_{selection}".strip()
 
-    # If it's not yet in the CLV tab, queue it to be added
     if clv_key not in existing_clv_keys:
-        # CLV Tab Structure: [BET (A), BOOKMAKER (B), PLACED ODDS (C), CLV (D), CLV EDGE % (E), EVENT ID (F)][cite: 9]
-        # We use a formula for Column E: =(C2/D2)-1
-        next_row_num = len(clv_rows) + len(new_appends) + 1
-        formula_edge = f"=(C{next_row_num}/D{next_row_num})-1"
+        target_row = current_next_row + len(new_appends)
+        # Use IFERROR to prevent #DIV/0! when Column D is blank
+        formula_edge = f"=IFERROR((C{target_row}/D{target_row})-1, \"\")"
         
-        new_row = [selection, bookie, placed_odds, "", formula_edge, event_id]
+        new_row = [selection, bookie, float(placed_odds) if placed_odds else "", "", formula_edge, event_id]
         new_appends.append(new_row)
         existing_clv_keys[clv_key] = {
-            'row_index': next_row_num,
+            'row_index': target_row,
             'clv_val': ""
         }
 
 if new_appends:
-    print(f"Appending {len(new_appends)} new bets to the CLV tab...")
-    clv_sheet.append_rows(new_appends, value_input_option='USER_ENTERED')
-    # Refresh clv_rows after append
-    clv_rows = clv_sheet.get_all_values()
+    print(f"Appending {len(new_appends)} new bets starting at row {current_next_row}...")
+    start_cell = f"A{current_next_row}"
+    end_cell = f"F{current_next_row + len(new_appends) - 1}"
+    clv_sheet.update(f"{start_cell}:{end_cell}", new_appends, value_input_option='USER_ENTERED')
+    
+    # Refresh clv_data
+    clv_data = clv_sheet.get_all_values()
 
 print("Checking Pinnacle closing odds for pending bets...")
 
-# Re-scan CLV sheet rows to find blanks in Column D (CLV)[cite: 9]
-for idx, row in enumerate(clv_rows[1:], start=2):
+# Re-scan CLV sheet rows to find blanks in Column D
+for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
-        bet_sel = row[0]
+        bet_sel = row[0].strip()
         bookie_name = row[1]
-        clv_price = row[3]  # Column D[cite: 9]
-        event_id = row[5]   # Column F[cite: 9]
+        clv_price = row[3] if len(row) > 3 else ""
+        event_id = row[5].strip()
 
-        if event_id and (not clv_price or clv_price == ""):
-            print(f"  Fetching closing odds for Event ID {event_id} ({bet_sel} at {bookie_name})...")
+        if event_id and (not clv_price or clv_price == "" or clv_price == "0"):
+            print(f"  Fetching closing odds for Event ID {event_id} ({bet_sel})...")
             
-            # Since we don't know the sport key directly from the ID, we can search via API or iterate sports if needed.
-            # Alternatively, query the active sports list to locate the event:
-            sports_url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
+            # Fetch event odds directly across regions
+            event_odds_url = f'https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={API_KEY}&regions=eu,us,uk&eventIds={event_id}&bookmakers=pinnacle&oddsFormat=decimal'
+            
             try:
-                sports_res = requests.get(sports_url, timeout=10)
-                if sports_res.status_code == 200:
-                    sports = sports_res.json()
+                event_res = requests.get(event_odds_url, timeout=10)
+                if event_res.status_code == 200:
+                    events = event_res.json()
                     found_closing = False
                     
-                    for sport in sports:
-                        sport_key = sport['key']
-                        event_odds_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}/odds/?apiKey={API_KEY}&regions=au,eu&oddsFormat=decimal'
-                        event_res = requests.get(event_odds_url, timeout=10)
-                        
-                        if event_res.status_code == 200:
-                            event_data = event_res.json()
-                            # Look for Pinnacle in bookmakers
-                            for bookmaker in event_data.get('bookmakers', []):
-                                if bookmaker['title'] == 'Pinnacle':
-                                    for market in bookmaker.get('markets', []):
-                                        for outcome in market.get('outcomes', []):
-                                            # Match outcome name/point/description to find the exact closing price
-                                            match_str = f"{outcome.get('description', '')} - {outcome['name']} {outcome.get('point', '')} ({market['key']})".strip()
-                                            if outcome['name'] in bet_sel or outcome.get('description', '') in bet_sel:
-                                                closing_price = outcome['price']
-                                                # Write closing price to Column D (Cell D{idx})[cite: 9]
-                                                clv_sheet.update_cell(idx, 4, closing_price)
-                                                print(f"    ✅ Updated CLV for row {idx}: ${closing_price}")
-                                                found_closing = True
-                                                break
-                                        if found_closing:
+                    for event_data in events:
+                        for bookmaker in event_data.get('bookmakers', []):
+                            if bookmaker.get('key') == 'pinnacle':
+                                for market in bookmaker.get('markets', []):
+                                    for outcome in market.get('outcomes', []):
+                                        outcome_name = outcome['name'].strip()
+                                        # Clean matching logic
+                                        if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                            closing_price = outcome['price']
+                                            clv_sheet.update_cell(idx, 4, closing_price)
+                                            print(f"    ✅ Updated CLV for Row {idx}: {closing_price}")
+                                            found_closing = True
                                             break
-                                if found_closing:
-                                    break
-                        if found_closing:
-                            break
-                        time.sleep(0.2)
-                time.sleep(0.5)
+                                    if found_closing:
+                                        break
+                            if found_closing:
+                                break
+                else:
+                    print(f"    ⚠️ API response {event_res.status_code} for event {event_id}")
+                time.sleep(0.3)
             except Exception as e:
                 print(f"    ⚠️ Error fetching CLV for event {event_id}: {e}")
 
