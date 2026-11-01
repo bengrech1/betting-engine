@@ -4,7 +4,6 @@ import gspread
 import requests
 import time
 import sys
-from datetime import datetime
 
 print("Authenticating with GitHub Secrets for CLV Updater...")
 
@@ -94,9 +93,9 @@ if new_appends:
     clv_sheet.update(f"{start_cell}:{end_cell}", new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
-print("Fetching true historical closing odds for concluded/past bets...")
+print("Fetching closing odds for pending and past bets...")
 
-# Get list of all sports to map event IDs to sport keys
+# Get list of all sports to map event IDs
 sports_url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
 sports_res = requests.get(sports_url, timeout=10)
 sport_keys = [s['key'] for s in sports_res.json()] if sports_res.status_code == 200 else []
@@ -109,43 +108,49 @@ for idx, row in enumerate(clv_data[1:], start=2):
         event_id = row[5].strip()
 
         if event_id and (not clv_price or clv_price == "" or clv_price == "0"):
-            print(f"  Searching historical data for Event ID {event_id} ({bet_sel})...")
-            
+            print(f"  Searching odds for Event ID {event_id} ({bet_sel})...")
             found_closing = False
+            
             for sport_key in sport_keys:
-                # First, check event details to get exact commence time
-                event_details_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
-                detail_res = requests.get(event_details_url, timeout=10)
+                # 1. Try Live/Upcoming endpoint first
+                live_odds_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}/odds/?apiKey={API_KEY}&regions=eu,au,us,uk&bookmakers=pinnacle&oddsFormat=decimal'
+                live_res = requests.get(live_odds_url, timeout=10)
                 
-                if detail_res.status_code == 200:
-                    event_info = detail_res.json()
-                    commence_time = event_info.get('commence_time')
-                    
-                    if commence_time:
-                        # Query historical odds at the exact commence time (closing line snapshot)
-                        hist_odds_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds?apiKey={API_KEY}&regions=eu,us,uk,au&markets=h2h&oddsFormat=decimal&date={commence_time}'
-                        hist_res = requests.get(hist_odds_url, timeout=10)
-                        
-                        if hist_res.status_code == 200:
-                            hist_data = hist_res.json()
-                            # Historical endpoint returns data inside a snapshot wrapper
-                            bookmakers = hist_data.get('data', {}).get('bookmakers', []) or hist_data.get('bookmakers', [])
-                            
-                            for bookmaker in bookmakers:
-                                if bookmaker.get('key') == 'pinnacle':
-                                    for market in bookmaker.get('markets', []):
-                                        for outcome in market.get('outcomes', []):
-                                            outcome_name = outcome['name'].strip()
-                                            if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
-                                                closing_price = outcome['price']
-                                                clv_sheet.update_cell(idx, 4, closing_price)
-                                                print(f"    ✅ Captured Pinnacle Closing Line for Row {idx}: {closing_price}")
-                                                found_closing = True
-                                                break
-                                        if found_closing:
-                                            break
+                event_data = None
+                if live_res.status_code == 200:
+                    event_data = live_res.json()
+                else:
+                    # 2. Fallback to Historical endpoint if game has concluded
+                    details_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
+                    det_res = requests.get(details_url, timeout=10)
+                    if det_res.status_code == 200:
+                        det_json = det_res.json()
+                        commence_time = det_json.get('commence_time')
+                        if commence_time:
+                            hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds?apiKey={API_KEY}&regions=eu,au,us,uk&markets=h2h&oddsFormat=decimal&date={commence_time}'
+                            hist_res = requests.get(hist_url, timeout=10)
+                            if hist_res.status_code == 200:
+                                hist_json = hist_res.json()
+                                event_data = hist_json.get('data', {})
+
+                # Extract Pinnacle odds from whichever endpoint succeeded
+                if event_data:
+                    bookmakers = event_data.get('bookmakers', [])
+                    for bookmaker in bookmakers:
+                        if bookmaker.get('key') == 'pinnacle':
+                            for market in bookmaker.get('markets', []):
+                                for outcome in market.get('outcomes', []):
+                                    outcome_name = outcome['name'].strip()
+                                    if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                        closing_price = outcome['price']
+                                        clv_sheet.update_cell(idx, 4, closing_price)
+                                        print(f"    ✅ Captured Pinnacle Closing Line for Row {idx}: {closing_price}")
+                                        found_closing = True
+                                        break
                                 if found_closing:
                                     break
+                        if found_closing:
+                            break
                 if found_closing:
                     break
                 time.sleep(0.2)
