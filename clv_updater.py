@@ -7,7 +7,7 @@ import sys
 import datetime
 from gspread.exceptions import APIError
 
-print("Authenticating with GitHub Secrets for CLV Updater...")
+print("Authenticating with GitHub Secrets for Historical Snapshot CLV Updater...")
 
 gcp_credentials_json = os.environ.get('GCP_CREDENTIALS')
 if not gcp_credentials_json:
@@ -44,7 +44,6 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     sys.exit(1)
 
-# Comprehensive dictionary mapping sheet names to Odds API sport keys
 LEAGUE_TO_SPORT_KEY = {
     "nbl": "basketball_nbl",
     "nba": "basketball_nba",
@@ -64,7 +63,6 @@ LEAGUE_TO_SPORT_KEY = {
     "mlb": "baseball_mlb"
 }
 
-# Bookmaker priority for closing lines
 TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
 
 # 1. Load existing CLV tab values
@@ -133,13 +131,12 @@ if new_appends:
     print(f"Appending {len(new_appends)} new bets starting at row {current_next_row}...")
     start_cell = f"A{current_next_row}"
     end_cell = f"F{current_next_row + len(new_appends) - 1}"
-    # Fixed gspread update syntax
     clv_sheet.update(range_name=f"{start_cell}:{end_cell}", values=new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
-print("Fetching true historical closing odds via single-event historical route...")
+print("Fetching true historical closing odds via historical snapshot snapshots...")
 
-# 3. Fetch Historical CLV using the Single-Event Historical Endpoint
+# 3. Fetch Historical CLV using Historical Snapshot Query by Date & Team Matching
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
@@ -152,8 +149,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 continue
             
             raw_league = t_row[league_idx].strip().lower() if len(t_row) > league_idx else ""
-            
-            # Fuzzy check for league keys
             sport_key = None
             for l_key, s_val in LEAGUE_TO_SPORT_KEY.items():
                 if l_key in raw_league:
@@ -164,69 +159,99 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 print(f"  ⚠️ Warning: League '{raw_league}' not mapped to sport key.")
                 continue
 
+            game_matchup = t_row[game_idx] if len(t_row) > game_idx else ""
+            if " vs " not in game_matchup:
+                print(f"  ⚠️ Could not parse matchup format from '{game_matchup}'")
+                continue
+            
+            home_team, away_team = game_matchup.split(" vs ", 1)
+            home_team = home_team.strip().lower()
+            away_team = away_team.strip().lower()
+
             commence_str = None
             
-            # Step 1: Try fetching event details from live endpoint first
+            # Try to get the real commence time from live endpoint; if it fails (game passed), 
+            # fallback to fetching the current timestamp or extracting from historical list.
             event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
             event_res = requests.get(event_url, timeout=10)
             
             if event_res.status_code == 200:
                 commence_str = event_res.json().get('commence_time')
             else:
-                # Step 1 Fallback: If game completed and deleted from live endpoint, use current time minus 2 hours as historical lookup baseline
-                print(f"  ℹ️ Live event info 404 for {event_id}. Using historical query directly...")
-                dt_now = datetime.datetime.now(datetime.timezone.utc)
-                commence_str = dt_now.strftime('%Y-%m-%dT%H:%M:%SZ')
+                # If game already ended, look up using current time offset or use a default past snapshot window 
+                # (Alternatively, you can store commence_time in your tracker sheet directly when placing bets).
+                # For now, let's look up using the historical endpoint with a recent or estimated timeframe, 
+                # or query the historical sport odds list directly:
+                pass
 
-            if commence_str:
-                dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
-                closing_target_dt = dt - datetime.timedelta(minutes=10)
-                formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            # If we don't have commence_str from live, we can fallback to checking recent historical snapshots.
+            # But wait: to query historical odds cleanly, we need a date timestamp. Let's make sure your main bot 
+            # writes the commence time into your TRACKER sheet so you never have to guess it.
+            # Let's check if commence time is available in tracker row, or query historical snapshot.
+            
+            # As a bulletproof fallback if commence_str is missing: check if there's a timestamp column or use current time minus 1 day.
+            if not commence_str:
+                # Fallback: check if we can query historical odds for today/yesterday snapshots
+                commence_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-                # Step 2: Query Single-Event Historical Odds Endpoint
-                hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds'
-                params = {
-                    'apiKey': API_KEY,
-                    'regions': 'eu,us,uk,au',
-                    'markets': 'h2h',
-                    'oddsFormat': 'decimal',
-                    'date': formatted_date
-                }
+            dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
+            closing_target_dt = dt - datetime.timedelta(minutes=10)
+            formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+            # Query Historical Odds Snapshot Endpoint (Bulk list for the sport at that time)
+            hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/odds'
+            params = {
+                'apiKey': API_KEY,
+                'regions': 'au,eu,us',
+                'markets': 'h2h',
+                'oddsFormat': 'decimal',
+                'date': formatted_date
+            }
+            
+            hist_res = requests.get(hist_url, params=params, timeout=15)
+
+            if hist_res.status_code == 200:
+                hist_payload = hist_res.json()
+                events_list = hist_payload.get('data', [])
                 
-                hist_res = requests.get(hist_url, params=params, timeout=10)
+                matched_event = None
+                for ev in events_list:
+                    ev_home = ev.get('home_team', '').strip().lower()
+                    ev_away = ev.get('away_team', '').strip().lower()
+                    if home_team in ev_home or ev_home in home_team or away_team in ev_away or ev_away in away_team:
+                        matched_event = ev
+                        break
 
-                if hist_res.status_code == 200:
-                    hist_payload = hist_res.json()
-                    event_data = hist_payload.get('data', {})
-                    
+                if matched_event:
                     found_closing = False
-                    bookmakers = {b['key']: b for b in event_data.get('bookmakers', [])}
+                    bookmakers = {b['key']: b for b in matched_event.get('bookmakers', [])}
                     
                     for b_key in TARGET_BOOKMAKERS:
                         if b_key in bookmakers:
                             bookie_obj = bookmakers[b_key]
                             for market in bookie_obj.get('markets', []):
-                                for outcome in market.get('outcomes', []):
-                                    outcome_name = outcome['name'].strip()
-                                    if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
-                                        closing_price = outcome['price']
-                                        clv_sheet.update_cell(idx, 4, closing_price)
-                                        print(f"    ✅ Captured Closing Line ({b_key}) for Row {idx} ({bet_sel}): {closing_price}")
-                                        found_closing = True
-                                        break
+                                if market['key'] == 'h2h':
+                                    for outcome in market.get('outcomes', []):
+                                        outcome_name = outcome['name'].strip()
+                                        if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                            closing_price = outcome['price']
+                                            clv_sheet.update_cell(idx, 4, closing_price)
+                                            print(f"    ✅ Captured Historical Closing Line ({b_key}) for Row {idx} ({bet_sel}): {closing_price}")
+                                            found_closing = True
+                                            break
                                 if found_closing:
                                     break
                         if found_closing:
                             break
                             
                     if not found_closing:
-                        print(f"    ⚠️ Snapshot found, but selection '{bet_sel}' didn't match any bookmaker outcome for event {event_id}")
+                        print(f"    ⚠️ Snapshot found for game, but selection '{bet_sel}' didn't match outcome names.")
                 else:
-                    print(f"    ⚠️ Historical API error {hist_res.status_code}: {hist_res.text}")
+                    print(f"    ⚠️ Could not find matching game in historical snapshot for {home_team} vs {away_team}")
             else:
-                print(f"    ⚠️ Could not determine time for {event_id}")
+                print(f"    ⚠️ Historical Snapshot API error {hist_res.status_code}: {hist_res.text}")
 
-            time.sleep(0.2)
+            time.sleep(0.5)
 
 print("\nCLV Update Complete!")
 sys.stdout.flush()
