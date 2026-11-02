@@ -60,24 +60,28 @@ LEAGUE_TO_SPORT_KEY = {
     "nhl": "icehockey_nhl",
     "nfl": "americanfootball_nfl",
     "afl": "aussierules_afl",
-    "mlb": "baseball_mlb"
+    "mlb": "baseball_mlb",
+    "international twenty20": "cricket_international_t20",
+    "t20": "cricket_international_t20",
+    "ipl": "cricket_ipl"
 }
 
 TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
 
 def normalize_tokens(name):
-    """Expands abbreviations, strips punctuation, and returns a set of unique word tokens"""
+    """Clean punctuation, common corporate/fc suffixes, and tokenize"""
     if not name:
         return set()
     n = name.lower().strip()
-    n = n.replace("s.e.", "south east").replace("se ", "south east ")
-    n = n.replace("nz ", "new zealand ")
+    # Strip unnecessary team fluff that causes match drops
+    for text in ["s.e.", "se ", "fc", "ac", "1907", "club"]:
+        n = n.replace(text, " ")
     for char in ['.', ',', '-', "'", '"', '(', ')']:
         n = n.replace(char, ' ')
     return set(n.split())
 
 def calculate_game_similarity(sheet_home, sheet_away, ev_home, ev_away):
-    """Calculates token Jaccard similarity across the entire game matchup, ignoring home/away order"""
+    """Calculates token similarity across matchup"""
     tracker_tokens = normalize_tokens(sheet_home).union(normalize_tokens(sheet_away))
     api_tokens = normalize_tokens(ev_home).union(normalize_tokens(ev_away))
     
@@ -113,10 +117,9 @@ try:
     selection_idx = header.index("Selection") if "Selection" in header else 2
     odds_idx = header.index("Odds") if "Odds" in header else 3
     
-    # Matching exact main.py screenshot layout
-    league_idx = header.index("League") if "League" in header else 12          # Col M (13th element)
-    event_id_idx = header.index("Event ID") if "Event ID" in header else 13      # Col N (14th element)
-    commence_time_idx = header.index("Commence Time") if "Commence Time" in header else 17 # Col R (18th element)
+    league_idx = header.index("League") if "League" in header else 12          # Col M
+    event_id_idx = header.index("Event ID") if "Event ID" in header else 13      # Col N
+    commence_time_idx = header.index("Commence Time") if "Commence Time" in header else 17 # Col R
 
 except Exception as e:
     game_idx, bookie_idx, selection_idx, odds_idx, league_idx, event_id_idx, commence_time_idx = 0, 1, 2, 3, 12, 13, 17
@@ -160,6 +163,8 @@ if new_appends:
 
 print("Fetching true historical closing odds via stored sheet timestamps & token-set matching...")
 
+now_utc = datetime.datetime.now(datetime.timezone.utc)
+
 # 3. Fetch Historical CLV using Stored Sheet Timestamps & Token-Set Matcher
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
@@ -202,12 +207,17 @@ for idx, row in enumerate(clv_data[1:], start=2):
                     commence_str = event_res.json().get('commence_time')
             
             if not commence_str:
-                commence_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                continue
 
             try:
                 dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
             except ValueError:
-                dt = datetime.datetime.now(datetime.timezone.utc)
+                continue
+
+            # SKIP if the game has not started yet (CLV only exists after game kickoff)
+            if dt > now_utc:
+                print(f"  ⏳ Skipping game '{game_matchup}' - starts in the future ({commence_str}).")
+                continue
 
             closing_target_dt = dt - datetime.timedelta(minutes=10)
             formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -239,7 +249,7 @@ for idx, row in enumerate(clv_data[1:], start=2):
                         highest_score = score
                         matched_event = ev
 
-                if matched_event and highest_score > 0.40:
+                if matched_event and highest_score >= 0.30:
                     found_closing = False
                     bookmakers = {b['key']: b for b in matched_event.get('bookmakers', [])}
                     
