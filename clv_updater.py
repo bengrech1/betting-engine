@@ -44,16 +44,17 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     sys.exit(1)
 
+# Correct Odds API Sport Keys mapping dictionary (Fixed ATP Paris Masters key)
 LEAGUE_TO_SPORT_KEY = {
     "nbl": "basketball_nbl",
     "nba": "basketball_nba",
     "epl": "soccer_epl",
     "nrl": "rugbyleague_nrl",
     "wnbl": "basketball_wnbl",
-    "atp paris masters": "tennis_atp_paris",
-    "atp paris": "tennis_atp_paris",
-    "paris masters": "tennis_atp_paris",
-    "atp": "tennis_atp_paris"
+    "atp paris masters": "tennis_atp_paris_masters",
+    "atp paris": "tennis_atp_paris_masters",
+    "paris masters": "tennis_atp_paris_masters",
+    "atp": "tennis_atp_paris_masters"
 }
 
 TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
@@ -83,7 +84,6 @@ try:
     odds_idx = header.index("Odds")
     event_id_idx = header.index("Event ID")
     
-    # Dynamically find League/Sport column
     league_idx = None
     for l_name in ["league", "sport"]:
         if l_name in [h.lower() for h in header]:
@@ -92,7 +92,6 @@ try:
     if league_idx is None:
         league_idx = 4
 
-    # Dynamically find Commence Time / Date column from tracker
     commence_time_idx = None
     for c_name in ["commence time", "date", "time", "start time", "commencetime"]:
         if c_name in [h.lower() for h in header]:
@@ -137,7 +136,6 @@ if new_appends:
     print(f"Appending {len(new_appends)} new bets starting at row {current_next_row}...")
     start_cell = f"A{current_next_row}"
     end_cell = f"F{current_next_row + len(new_appends) - 1}"
-    # Fixed gspread deprecation warning using keyword arguments
     clv_sheet.update(range_name=f"{start_cell}:{end_cell}", values=new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
@@ -162,14 +160,12 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 print(f"  ⚠️ Warning: League '{league_val}' not mapped to sport key.")
                 continue
 
-            # Extract commence time straight from the tracker row instead of a live API call
             commence_str = None
             if commence_time_idx is not None and len(t_row) > commence_time_idx:
                 commence_str = t_row[commence_time_idx].strip()
 
             if commence_str:
                 try:
-                    # Step back 10 minutes from kickoff to grab pre-game closing odds
                     dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
                     closing_target_dt = dt - datetime.timedelta(minutes=10)
                     formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -177,7 +173,6 @@ for idx, row in enumerate(clv_data[1:], start=2):
                     print(f"  ⚠️ Error parsing date '{commence_str}': {e}")
                     continue
 
-                # Query the Single-Event Historical Odds Endpoint
                 hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds'
                 params = {
                     'apiKey': API_KEY,
