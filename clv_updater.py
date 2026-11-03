@@ -7,7 +7,7 @@ import sys
 import datetime
 from gspread.exceptions import APIError
 
-print("Authenticating with GitHub Secrets for Historical Snapshot CLV Updater...")
+print("Authenticating with GitHub Secrets for CLV Updater...")
 
 gcp_credentials_json = os.environ.get('GCP_CREDENTIALS')
 if not gcp_credentials_json:
@@ -44,54 +44,22 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     sys.exit(1)
 
+# League text (from your sheet) -> Odds API Sport Key mapping
 LEAGUE_TO_SPORT_KEY = {
     "nbl": "basketball_nbl",
     "nba": "basketball_nba",
-    "wnbl": "basketball_wnbl",
     "epl": "soccer_epl",
-    "serie a - italy": "soccer_italy_serie_a",
-    "serie a": "soccer_italy_serie_a",
-    "la liga": "soccer_spain_la_liga",
-    "bundesliga": "soccer_germany_bundesliga",
-    "ligue 1": "soccer_france_ligue_one",
-    "a-league": "soccer_australia_aleague",
-    "champions league": "soccer_uefa_champions_league",
     "nrl": "rugbyleague_nrl",
-    "nhl": "icehockey_nhl",
-    "nfl": "americanfootball_nfl",
-    "afl": "aussierules_afl",
-    "mlb": "baseball_mlb",
-    "international twenty20": "cricket_international_t20",
-    "t20": "cricket_international_t20",
-    "ipl": "cricket_ipl"
+    "wnbl": "basketball_wnbl",
+    # Tennis additions:
+    "atp paris masters": "tennis_atp_paris",
+    "atp paris": "tennis_atp_paris",
+    "paris masters": "tennis_atp_paris",
+    "atp": "tennis_atp_paris"
 }
 
+# Bookmaker priority (Pinnacle primary for sharp lines, plus major global books)
 TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
-
-def normalize_tokens(name):
-    """Clean punctuation, common corporate/fc suffixes, and tokenize"""
-    if not name:
-        return set()
-    n = name.lower().strip()
-    # Strip unnecessary team fluff that causes match drops
-    for text in ["s.e.", "se ", "fc", "ac", "1907", "club"]:
-        n = n.replace(text, " ")
-    for char in ['.', ',', '-', "'", '"', '(', ')']:
-        n = n.replace(char, ' ')
-    return set(n.split())
-
-def calculate_game_similarity(sheet_home, sheet_away, ev_home, ev_away):
-    """Calculates token similarity across matchup"""
-    tracker_tokens = normalize_tokens(sheet_home).union(normalize_tokens(sheet_away))
-    api_tokens = normalize_tokens(ev_home).union(normalize_tokens(ev_away))
-    
-    if not tracker_tokens or not api_tokens:
-        return 0.0
-        
-    intersection = tracker_tokens.intersection(api_tokens)
-    union = tracker_tokens.union(api_tokens)
-    
-    return len(intersection) / len(union)
 
 # 1. Load existing CLV tab values
 col_a = clv_sheet.col_values(1)
@@ -112,17 +80,18 @@ tracker_rows = tracker_sheet.get_all_values()
 header = tracker_rows[0]
 
 try:
-    game_idx = header.index("Game") if "Game" in header else 0
-    bookie_idx = header.index("Bookmaker") if "Bookmaker" in header else 1
-    selection_idx = header.index("Selection") if "Selection" in header else 2
-    odds_idx = header.index("Odds") if "Odds" in header else 3
-    
-    league_idx = header.index("League") if "League" in header else 12          # Col M
-    event_id_idx = header.index("Event ID") if "Event ID" in header else 13      # Col N
-    commence_time_idx = header.index("Commence Time") if "Commence Time" in header else 17 # Col R
-
-except Exception as e:
-    game_idx, bookie_idx, selection_idx, odds_idx, league_idx, event_id_idx, commence_time_idx = 0, 1, 2, 3, 12, 13, 17
+    game_idx = header.index("Game")
+    bookie_idx = header.index("Bookmaker")
+    selection_idx = header.index("Selection")
+    odds_idx = header.index("Odds")
+    event_id_idx = header.index("Event ID")
+    try:
+        league_idx = header.index("League")
+    except ValueError:
+        league_idx = header.index("Sport") if "Sport" in header else 4
+except ValueError as e:
+    print(f"Header mapping error: {e}")
+    game_idx, bookie_idx, selection_idx, odds_idx, event_id_idx, league_idx = 0, 1, 2, 3, 13, 4
 
 print(f"Scanning {len(tracker_rows)-1} bets from TRACKER for CLV sync...")
 
@@ -158,14 +127,12 @@ if new_appends:
     print(f"Appending {len(new_appends)} new bets starting at row {current_next_row}...")
     start_cell = f"A{current_next_row}"
     end_cell = f"F{current_next_row + len(new_appends) - 1}"
-    clv_sheet.update(range_name=f"{start_cell}:{end_cell}", values=new_appends, value_input_option='USER_ENTERED')
+    clv_sheet.update(f"{start_cell}:{end_cell}", new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
-print("Fetching true historical closing odds via stored sheet timestamps & token-set matching...")
+print("Fetching true historical closing odds via single-event historical route...")
 
-now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-# 3. Fetch Historical CLV using Stored Sheet Timestamps & Token-Set Matcher
+# 3. Fetch Historical CLV using the Direct Single-Event Historical Endpoint
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
@@ -177,111 +144,71 @@ for idx, row in enumerate(clv_data[1:], start=2):
             if not t_row:
                 continue
             
-            raw_league = t_row[league_idx].strip().lower() if len(t_row) > league_idx else ""
-            sport_key = None
-            for l_key, s_val in LEAGUE_TO_SPORT_KEY.items():
-                if l_key in raw_league:
-                    sport_key = s_val
-                    break
+            league_val = t_row[league_idx].strip().lower() if len(t_row) > league_idx else ""
+            sport_key = LEAGUE_TO_SPORT_KEY.get(league_val)
             
             if not sport_key:
-                if raw_league in LEAGUE_TO_SPORT_KEY.values():
-                    sport_key = raw_league
-                else:
-                    print(f"  ⚠️ Warning: League '{raw_league}' not mapped to sport key.")
-                    continue
-
-            game_matchup = t_row[game_idx] if len(t_row) > game_idx else ""
-            if " vs " not in game_matchup:
-                print(f"  ⚠️ Could not parse matchup format from '{game_matchup}'")
-                continue
-            
-            sheet_home, sheet_away = game_matchup.split(" vs ", 1)
-
-            commence_str = t_row[commence_time_idx].strip() if len(t_row) > commence_time_idx else None
-            
-            if not commence_str:
-                event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
-                event_res = requests.get(event_url, timeout=10)
-                if event_res.status_code == 200:
-                    commence_str = event_res.json().get('commence_time')
-            
-            if not commence_str:
+                print(f"  ⚠️ Warning: League '{league_val}' not mapped to sport key.")
                 continue
 
-            try:
+            # Step 1: Fetch event details to get the exact commence time
+            event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
+            event_res = requests.get(event_url, timeout=10)
+            
+            commence_str = None
+            if event_res.status_code == 200:
+                commence_str = event_res.json().get('commence_time')
+
+            if commence_str:
+                # Step 2: Step back 10 minutes from kickoff to grab pre-game closing odds
                 dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
-            except ValueError:
-                continue
+                closing_target_dt = dt - datetime.timedelta(minutes=10)
+                formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-            # SKIP if the game has not started yet (CLV only exists after game kickoff)
-            if dt > now_utc:
-                print(f"  ⏳ Skipping game '{game_matchup}' - starts in the future ({commence_str}).")
-                continue
-
-            closing_target_dt = dt - datetime.timedelta(minutes=10)
-            formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-            hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/odds'
-            params = {
-                'apiKey': API_KEY,
-                'regions': 'au,eu,us',
-                'markets': 'h2h',
-                'oddsFormat': 'decimal',
-                'date': formatted_date
-            }
-            
-            hist_res = requests.get(hist_url, params=params, timeout=15)
-
-            if hist_res.status_code == 200:
-                hist_payload = hist_res.json()
-                events_list = hist_payload.get('data', [])
+                # Step 3: Query the exact Single-Event Historical Odds Endpoint
+                hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds'
+                params = {
+                    'apiKey': API_KEY,
+                    'regions': 'eu,us,uk,au',
+                    'markets': 'h2h',
+                    'oddsFormat': 'decimal',
+                    'date': formatted_date
+                }
                 
-                matched_event = None
-                highest_score = 0.0
-                
-                for ev in events_list:
-                    ev_home = ev.get('home_team', '')
-                    ev_away = ev.get('away_team', '')
+                hist_res = requests.get(hist_url, params=params, timeout=10)
+
+                if hist_res.status_code == 200:
+                    hist_payload = hist_res.json()
+                    event_data = hist_payload.get('data', {})
                     
-                    score = calculate_game_similarity(sheet_home, sheet_away, ev_home, ev_away)
-                    if score > highest_score:
-                        highest_score = score
-                        matched_event = ev
-
-                if matched_event and highest_score >= 0.30:
                     found_closing = False
-                    bookmakers = {b['key']: b for b in matched_event.get('bookmakers', [])}
+                    bookmakers = {b['key']: b for b in event_data.get('bookmakers', [])}
                     
-                    bet_tokens = normalize_tokens(bet_sel)
                     for b_key in TARGET_BOOKMAKERS:
                         if b_key in bookmakers:
                             bookie_obj = bookmakers[b_key]
                             for market in bookie_obj.get('markets', []):
-                                if market['key'] == 'h2h':
-                                    for outcome in market.get('outcomes', []):
-                                        outcome_name = outcome['name'].strip()
-                                        outcome_tokens = normalize_tokens(outcome_name)
-                                        
-                                        if outcome_tokens.issubset(bet_tokens) or outcome_name.lower() in bet_sel.lower():
-                                            closing_price = outcome['price']
-                                            clv_sheet.update_cell(idx, 4, closing_price)
-                                            print(f"    ✅ Captured Historical Closing Line ({b_key}) for Row {idx} ({bet_sel}) [Target Date: {formatted_date} | Match Score: {round(highest_score*100)}%]: {closing_price}")
-                                            found_closing = True
-                                            break
+                                for outcome in market.get('outcomes', []):
+                                    outcome_name = outcome['name'].strip()
+                                    if outcome_name.lower() in bet_sel.lower() or bet_sel.lower() in outcome_name.lower():
+                                        closing_price = outcome['price']
+                                        clv_sheet.update_cell(idx, 4, closing_price)
+                                        print(f"    ✅ Captured Closing Line ({b_key}) for Row {idx} ({bet_sel}): {closing_price}")
+                                        found_closing = True
+                                        break
                                 if found_closing:
                                     break
                         if found_closing:
                             break
                             
                     if not found_closing:
-                        print(f"    ⚠️ Snapshot found for game on {formatted_date}, but selection '{bet_sel}' didn't match outcome names.")
+                        print(f"    ⚠️ Snapshot found, but selection '{bet_sel}' didn't match any bookmaker outcome for event {event_id}")
                 else:
-                    print(f"    ⚠️ Could not find token-matching game on {formatted_date} for '{game_matchup}' (Best score: {round(highest_score*100)}%)")
+                    print(f"    ⚠️ Historical API error {hist_res.status_code}: {hist_res.text}")
             else:
-                print(f"    ⚠️ Historical Snapshot API error {hist_res.status_code}: {hist_res.text}")
+                print(f"    ⚠️ Could not fetch event commence time for {event_id}")
 
-            time.sleep(0.5)
+            time.sleep(0.2)
 
 print("\nCLV Update Complete!")
 sys.stdout.flush()
