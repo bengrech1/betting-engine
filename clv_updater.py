@@ -44,21 +44,18 @@ if not API_KEY:
     print("Error: ODDS_API_KEY secret is missing!")
     sys.exit(1)
 
-# League text (from your sheet) -> Odds API Sport Key mapping
 LEAGUE_TO_SPORT_KEY = {
     "nbl": "basketball_nbl",
     "nba": "basketball_nba",
     "epl": "soccer_epl",
     "nrl": "rugbyleague_nrl",
     "wnbl": "basketball_wnbl",
-    # Tennis additions:
     "atp paris masters": "tennis_atp_paris",
     "atp paris": "tennis_atp_paris",
     "paris masters": "tennis_atp_paris",
     "atp": "tennis_atp_paris"
 }
 
-# Bookmaker priority (Pinnacle primary for sharp lines, plus major global books)
 TARGET_BOOKMAKERS = ["pinnacle", "bet365", "draftkings", "fanduel", "unibet", "williamhill"]
 
 # 1. Load existing CLV tab values
@@ -85,13 +82,26 @@ try:
     selection_idx = header.index("Selection")
     odds_idx = header.index("Odds")
     event_id_idx = header.index("Event ID")
-    try:
-        league_idx = header.index("League")
-    except ValueError:
-        league_idx = header.index("Sport") if "Sport" in header else 4
+    
+    # Dynamically find League/Sport column
+    league_idx = None
+    for l_name in ["league", "sport"]:
+        if l_name in [h.lower() for h in header]:
+            league_idx = [h.lower() for h in header].index(l_name)
+            break
+    if league_idx is None:
+        league_idx = 4
+
+    # Dynamically find Commence Time / Date column from tracker
+    commence_time_idx = None
+    for c_name in ["commence time", "date", "time", "start time", "commencetime"]:
+        if c_name in [h.lower() for h in header]:
+            commence_time_idx = [h.lower() for h in header].index(c_name)
+            break
+
 except ValueError as e:
     print(f"Header mapping error: {e}")
-    game_idx, bookie_idx, selection_idx, odds_idx, event_id_idx, league_idx = 0, 1, 2, 3, 13, 4
+    game_idx, bookie_idx, selection_idx, odds_idx, event_id_idx, league_idx, commence_time_idx = 0, 1, 2, 3, 13, 4, None
 
 print(f"Scanning {len(tracker_rows)-1} bets from TRACKER for CLV sync...")
 
@@ -127,12 +137,13 @@ if new_appends:
     print(f"Appending {len(new_appends)} new bets starting at row {current_next_row}...")
     start_cell = f"A{current_next_row}"
     end_cell = f"F{current_next_row + len(new_appends) - 1}"
-    clv_sheet.update(f"{start_cell}:{end_cell}", new_appends, value_input_option='USER_ENTERED')
+    # Fixed gspread deprecation warning using keyword arguments
+    clv_sheet.update(range_name=f"{start_cell}:{end_cell}", values=new_appends, value_input_option='USER_ENTERED')
     clv_data = clv_sheet.get_all_values()
 
-print("Fetching true historical closing odds via single-event historical route...")
+print("Fetching true historical closing odds directly using tracker commence times...")
 
-# 3. Fetch Historical CLV using the Direct Single-Event Historical Endpoint
+# 3. Fetch Historical CLV using Commence Time directly from the TRACKER row
 for idx, row in enumerate(clv_data[1:], start=2):
     if len(row) >= 6:
         bet_sel = row[0].strip()
@@ -151,21 +162,22 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 print(f"  ⚠️ Warning: League '{league_val}' not mapped to sport key.")
                 continue
 
-            # Step 1: Fetch event details to get the exact commence time
-            event_url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/events/{event_id}?apiKey={API_KEY}'
-            event_res = requests.get(event_url, timeout=10)
-            
+            # Extract commence time straight from the tracker row instead of a live API call
             commence_str = None
-            if event_res.status_code == 200:
-                commence_str = event_res.json().get('commence_time')
+            if commence_time_idx is not None and len(t_row) > commence_time_idx:
+                commence_str = t_row[commence_time_idx].strip()
 
             if commence_str:
-                # Step 2: Step back 10 minutes from kickoff to grab pre-game closing odds
-                dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
-                closing_target_dt = dt - datetime.timedelta(minutes=10)
-                formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                try:
+                    # Step back 10 minutes from kickoff to grab pre-game closing odds
+                    dt = datetime.datetime.fromisoformat(commence_str.replace('Z', '+00:00'))
+                    closing_target_dt = dt - datetime.timedelta(minutes=10)
+                    formatted_date = closing_target_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+                except Exception as e:
+                    print(f"  ⚠️ Error parsing date '{commence_str}': {e}")
+                    continue
 
-                # Step 3: Query the exact Single-Event Historical Odds Endpoint
+                # Query the Single-Event Historical Odds Endpoint
                 hist_url = f'https://api.the-odds-api.com/v4/historical/sports/{sport_key}/events/{event_id}/odds'
                 params = {
                     'apiKey': API_KEY,
@@ -206,7 +218,7 @@ for idx, row in enumerate(clv_data[1:], start=2):
                 else:
                     print(f"    ⚠️ Historical API error {hist_res.status_code}: {hist_res.text}")
             else:
-                print(f"    ⚠️ Could not fetch event commence time for {event_id}")
+                print(f"    ⚠️ Could not find commence time in tracker row for event {event_id}")
 
             time.sleep(0.2)
 
