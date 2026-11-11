@@ -54,7 +54,7 @@ if not API_KEY:
 
 REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = 0.015 
+MIN_EDGE = 0.010  # Lowered minimum edge down to 1.0% for all bets (including spreads)
 
 # --- CONTROLLED TIER-1 SPORTS & LEAGUES FETCHER ---
 print("Scanning The Odds API for Tier-1 mainstream sports and major leagues...")
@@ -78,7 +78,8 @@ try:
         ALLOWED_SOCCER_KEYS = [
             'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
             'soccer_germany_bundesliga', 'soccer_france_ligue_one',
-            'soccer_australia_aleague', 'soccer_uefa_champions_league'
+            'soccer_australia_aleague', 'soccer_uefa_champions_league',
+            'soccer_efl_champ', 'soccer_usa_mls', 'soccer_netherlands_eredivisie'
         ]
         
         for sport in sports_data:
@@ -88,17 +89,17 @@ try:
                 
                 if key in ALLOWED_SPORT_KEYS or key in ALLOWED_SOCCER_KEYS or 'tennis' in group:
                     if 'tennis' in group or key in ['basketball_nbl', 'basketball_euroleague', 'cricket_big_bash', 'cricket_ipl', 'cricket_international_t20', 'cricket_odi', 'rugbyleague_nrl', 'rugbyunion_super_rugby', 'soccer_australia_aleague']:
-                        SPORT_MARKETS[key] = 'h2h'
+                        SPORT_MARKETS[key] = 'h2h,spreads'
                     else:
-                        SPORT_MARKETS[key] = 'h2h,totals'
+                        SPORT_MARKETS[key] = 'h2h,spreads,totals'
                     
         print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} safe, Tier-1 mainstream leagues worldwide.")
     else:
         print("Failed to fetch active sports list. Using fallback.")
-        SPORT_MARKETS = {'basketball_nba': 'h2h,totals', 'soccer_epl': 'h2h,totals'}
+        SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
 except Exception as e:
     print(f"Error fetching active sports: {e}. Using fallback.")
-    SPORT_MARKETS = {'basketball_nba': 'h2h,totals', 'soccer_epl': 'h2h,totals'}
+    SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
 # -----------------------------------------------------------------
 
 profitable_bets_found = 0
@@ -124,7 +125,7 @@ for sport, markets in SPORT_MARKETS.items():
         commence_time = datetime.datetime.strptime(event['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
         now_utc = datetime.datetime.utcnow()
         
-        cutoff_time = now_utc + datetime.timedelta(hours=48)
+        cutoff_time = now_utc + datetime.timedelta(hours=72)  # Increased cutoff time to 72 hours
         
         if commence_time < now_utc or commence_time > cutoff_time:
             continue 
