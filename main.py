@@ -54,7 +54,13 @@ if not API_KEY:
 
 REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = 0.010  # Lowered minimum edge to 1.0% for all markets (including spreads)
+MIN_EDGE = 0.010  # 1.0% minimum edge threshold
+
+PLAYER_PROP_PREFIXES = ("player_", "pitcher_", "batter_")
+
+def is_player_prop(market_key: str) -> bool:
+    """Detects whether a market key belongs to a player prop."""
+    return market_key.lower().startswith(PLAYER_PROP_PREFIXES)
 
 # --- CONTROLLED TIER-1 SPORTS & LEAGUES FETCHER ---
 print("Scanning The Odds API for Tier-1 mainstream sports and major leagues...")
@@ -91,7 +97,10 @@ try:
                 group = sport.get('group', '').lower()
                 
                 if key in ALLOWED_SPORT_KEYS or key in ALLOWED_SOCCER_KEYS or 'tennis' in group or 'golf' in group:
-                    if 'tennis' in group or 'golf' in group or 'darts' in key or key in [
+                    # Player props added specifically for major player-prop leagues (e.g. NBA, NFL, MLB)
+                    if key in ['basketball_nba', 'americanfootball_nfl', 'baseball_mlb']:
+                        SPORT_MARKETS[key] = 'h2h,spreads,totals,player_points,player_rebounds,player_assists'
+                    elif 'tennis' in group or 'golf' in group or 'darts' in key or key in [
                         'basketball_nbl', 'basketball_euroleague', 'basketball_spain_acb', 
                         'basketball_germany_bbl', 'basketball_france_pro_a', 'cricket_big_bash', 
                         'cricket_ipl', 'cricket_international_t20', 'cricket_odi', 
@@ -104,10 +113,10 @@ try:
         print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} safe, Tier-1 mainstream leagues and sports worldwide.")
     else:
         print("Failed to fetch active sports list. Using fallback.")
-        SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
+        SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals,player_points', 'soccer_epl': 'h2h,spreads,totals'}
 except Exception as e:
     print(f"Error fetching active sports: {e}. Using fallback.")
-    SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
+    SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals,player_points', 'soccer_epl': 'h2h,spreads,totals'}
 # -----------------------------------------------------------------
 
 profitable_bets_found = 0
@@ -174,6 +183,7 @@ for sport, markets in SPORT_MARKETS.items():
                         continue
                     
                     total_market_implied = sum((1 / p['price']) for p in pin_outcomes)
+                    margin = total_market_implied - 1.0
                     
                     for bookie in game['bookmakers']:
                         if bookie['title'] in ['Sportsbet', 'TAB', 'Betr', 'Bet365', 'PointsBet (AU)', 'PointsBet', 'Neds', 'Bet365 AU', 'PlayUp', 'TABtouch']:
@@ -197,7 +207,15 @@ for sport, markets in SPORT_MARKETS.items():
                                             continue
                                             
                                         raw_prob = 1 / pin_price
-                                        true_prob = raw_prob / total_market_implied
+                                        
+                                        # --- MARKET-AWARE DEVIGGING ---
+                                        if is_player_prop(market_key):
+                                            # Additive method for wide-margin prop lines
+                                            true_prob = raw_prob - (margin / len(pin_outcomes))
+                                        else:
+                                            # Original multiplicative devigging preserved for main markets
+                                            true_prob = raw_prob / total_market_implied
+                                            
                                         edge = (true_prob * local_odds) - 1
                                         
                                         if edge >= MIN_EDGE:
@@ -217,18 +235,18 @@ for sport, markets in SPORT_MARKETS.items():
                                                 stake_formula = f'=IFERROR(ROUND(({edge} / (D2 - 1) / 2) * BANKROLL!$B$4, 2), 0)'
                                                 
                                                 row_data = [
-                                                    matchup,                 # Col A (1)
-                                                    bookie['title'],         # Col B (2)
-                                                    selection,               # Col C (3)
-                                                    local_odds,              # Col D (4)
-                                                    stake_formula,           # Col E (5)
-                                                    pin_price,               # Col F (6)
-                                                    "", "", "", "", "",      # Cols G-K (7-11: Result, Actual Stake, P/L, Date, Notes)
-                                                    edge_formatted,          # Col L (12: Edge %)
-                                                    league_title,            # Col M (13: League)
-                                                    event_id,                # Col N (14: Event ID)
-                                                    "", "", "",              # Cols O-Q (15-17: ($EV), Cum. Actual P/L, Cum. Expected P/L)
-                                                    event['commence_time']   # Col R (18: Commence Time timestamp)
+                                                    matchup,                                 # Col A (1)
+                                                    bookie['title'],                         # Col B (2)
+                                                    selection,                               # Col C (3)
+                                                    local_odds,                              # Col D (4)
+                                                    stake_formula,                           # Col E (5)
+                                                    pin_price,                               # Col F (6)
+                                                    "", "", "", "", "",                      # Cols G-K (7-11: Result, Actual Stake, P/L, Date, Notes)
+                                                    edge_formatted,                          # Col L (12: Edge %)
+                                                    league_title,                            # Col M (13: League)
+                                                    event_id,                                # Col N (14: Event ID)
+                                                    "", "", "",                              # Cols O-Q (15-17: ($EV), Cum. Actual P/L, Cum. Expected P/L)
+                                                    event['commence_time']                   # Col R (18: Commence Time timestamp)
                                                 ]
                                                 
                                                 max_retries = 3
