@@ -54,7 +54,7 @@ if not API_KEY:
 
 REGIONS = 'au,eu'
 ODDS_FORMAT = 'decimal'
-MIN_EDGE = 0.010  # Lowered minimum edge down to 1.0% for all bets (including spreads)
+MIN_EDGE = 0.010  # Lowered minimum edge to 1.0% for all markets (including spreads)
 
 # --- CONTROLLED TIER-1 SPORTS & LEAGUES FETCHER ---
 print("Scanning The Odds API for Tier-1 mainstream sports and major leagues...")
@@ -68,18 +68,21 @@ try:
         
         ALLOWED_SPORT_KEYS = [
             'basketball_nba', 'basketball_nbl', 'basketball_euroleague',
+            'basketball_spain_acb', 'basketball_germany_bbl', 'basketball_france_pro_a',
             'americanfootball_nfl', 'aussierules_afl',
             'icehockey_nhl',
             'cricket_big_bash', 'cricket_ipl', 'cricket_international_t20', 'cricket_odi',
             'rugbyleague_nrl', 'rugbyunion_super_rugby',
-            'baseball_mlb'
+            'baseball_mlb',
+            'darts_pdc_world_championship', 'darts_premier_league'
         ]
         
         ALLOWED_SOCCER_KEYS = [
             'soccer_epl', 'soccer_spain_la_liga', 'soccer_italy_serie_a',
             'soccer_germany_bundesliga', 'soccer_france_ligue_one',
             'soccer_australia_aleague', 'soccer_uefa_champions_league',
-            'soccer_efl_champ', 'soccer_usa_mls', 'soccer_netherlands_eredivisie'
+            'soccer_efl_champ', 'soccer_usa_mls', 'soccer_netherlands_eredivisie',
+            'soccer_scotland_premiership', 'soccer_copa_libertadores'
         ]
         
         for sport in sports_data:
@@ -87,13 +90,18 @@ try:
                 key = sport['key']
                 group = sport.get('group', '').lower()
                 
-                if key in ALLOWED_SPORT_KEYS or key in ALLOWED_SOCCER_KEYS or 'tennis' in group:
-                    if 'tennis' in group or key in ['basketball_nbl', 'basketball_euroleague', 'cricket_big_bash', 'cricket_ipl', 'cricket_international_t20', 'cricket_odi', 'rugbyleague_nrl', 'rugbyunion_super_rugby', 'soccer_australia_aleague']:
-                        SPORT_MARKETS[key] = 'h2h,spreads'
+                if key in ALLOWED_SPORT_KEYS or key in ALLOWED_SOCCER_KEYS or 'tennis' in group or 'golf' in group:
+                    if 'tennis' in group or 'golf' in group or 'darts' in key or key in [
+                        'basketball_nbl', 'basketball_euroleague', 'basketball_spain_acb', 
+                        'basketball_germany_bbl', 'basketball_france_pro_a', 'cricket_big_bash', 
+                        'cricket_ipl', 'cricket_international_t20', 'cricket_odi', 
+                        'rugbyleague_nrl', 'rugbyunion_super_rugby', 'soccer_australia_aleague'
+                    ]:
+                        SPORT_MARKETS[key] = 'h2h'
                     else:
                         SPORT_MARKETS[key] = 'h2h,spreads,totals'
                     
-        print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} safe, Tier-1 mainstream leagues worldwide.")
+        print(f"Success! Filtered and loaded {len(SPORT_MARKETS)} safe, Tier-1 mainstream leagues and sports worldwide.")
     else:
         print("Failed to fetch active sports list. Using fallback.")
         SPORT_MARKETS = {'basketball_nba': 'h2h,spreads,totals', 'soccer_epl': 'h2h,spreads,totals'}
@@ -125,7 +133,7 @@ for sport, markets in SPORT_MARKETS.items():
         commence_time = datetime.datetime.strptime(event['commence_time'], '%Y-%m-%dT%H:%M:%SZ')
         now_utc = datetime.datetime.utcnow()
         
-        cutoff_time = now_utc + datetime.timedelta(hours=72)  # Increased cutoff time to 72 hours
+        cutoff_time = now_utc + datetime.timedelta(hours=72)  # 72-hour early opening line window
         
         if commence_time < now_utc or commence_time > cutoff_time:
             continue 
